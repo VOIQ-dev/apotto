@@ -1,103 +1,208 @@
-import Image from "next/image";
+'use client';
+
+import { useState } from 'react';
+
+type ContactPayload = {
+  url: string;
+  company?: string;
+  person?: string;
+  name?: string;
+  email?: string;
+  phone?: string;
+  subject?: string;
+  message?: string;
+  debug?: boolean;
+};
 
 export default function Home() {
-  return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [form, setForm] = useState<ContactPayload>({ url: '' });
+  const [isRunning, setIsRunning] = useState(false);
+  const [logs, setLogs] = useState<string[]>([]);
+  const [result, setResult] = useState<null | {
+    success: boolean;
+    finalUrl?: string;
+    note?: string;
+  }>(null);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
+  async function handleStart() {
+    setIsRunning(true);
+    setLogs([]);
+    setResult(null);
+    try {
+      const res = await fetch('/api/auto-submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      const data = await res.json();
+      setLogs(data.logs ?? []);
+      setResult({
+        success: !!data.success,
+        finalUrl: data.finalUrl,
+        note: data.note,
+      });
+    } catch (err: any) {
+      setLogs((prev) => [
+        ...prev,
+        `Client error: ${err?.message ?? String(err)}`,
+      ]);
+      setResult({ success: false });
+    } finally {
+      setIsRunning(false);
+    }
+  }
+
+  return (
+    <div className="font-sans min-h-screen p-8 sm:p-12">
+      <main className="max-w-3xl mx-auto w-full flex flex-col gap-6">
+        <h1 className="text-2xl font-semibold">問い合わせ自動送信</h1>
+        <div className="grid grid-cols-1 gap-4">
+          <label className="flex flex-col gap-1">
+            <span className="text-sm">対象サイトURL</span>
+            <input
+              className="border rounded px-3 py-2"
+              type="url"
+              placeholder="https://example.com"
+              value={form.url}
+              onChange={(e) => setForm((f) => ({ ...f, url: e.target.value }))}
+              required
             />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+          </label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <label className="flex flex-col gap-1">
+              <span className="text-sm">会社名</span>
+              <input
+                className="border rounded px-3 py-2"
+                type="text"
+                placeholder="株式会社サンプル"
+                value={form.company ?? ''}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, company: e.target.value }))
+                }
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-sm">担当者名</span>
+              <input
+                className="border rounded px-3 py-2"
+                type="text"
+                placeholder="営業部 山田 太郎"
+                value={form.person ?? ''}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, person: e.target.value }))
+                }
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-sm">お名前</span>
+              <input
+                className="border rounded px-3 py-2"
+                type="text"
+                placeholder="山田 太郎"
+                value={form.name ?? ''}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, name: e.target.value }))
+                }
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-sm">メールアドレス</span>
+              <input
+                className="border rounded px-3 py-2"
+                type="email"
+                placeholder="taro@example.com"
+                value={form.email ?? ''}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, email: e.target.value }))
+                }
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-sm">電話番号</span>
+              <input
+                className="border rounded px-3 py-2"
+                type="tel"
+                placeholder="090-1234-5678"
+                value={form.phone ?? ''}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, phone: e.target.value }))
+                }
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-sm">件名</span>
+              <input
+                className="border rounded px-3 py-2"
+                type="text"
+                placeholder="お問い合わせ"
+                value={form.subject ?? ''}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, subject: e.target.value }))
+                }
+              />
+            </label>
+          </div>
+          <label className="flex flex-col gap-1">
+            <span className="text-sm">本文</span>
+            <textarea
+              className="border rounded px-3 py-2 min-h-32"
+              placeholder="お問い合わせ内容を入力してください"
+              value={form.message ?? ''}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, message: e.target.value }))
+              }
+            />
+          </label>
+        </div>
+
+        <div className="flex gap-3 items-center">
+          <button
+            type="button"
+            className="px-4 py-2 rounded bg-black text-white disabled:opacity-50"
+            disabled={isRunning || !form.url}
+            onClick={handleStart}
           >
-            Read our docs
-          </a>
+            {isRunning ? '実行中...' : '開始'}
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 gap-2">
+          <label className="inline-flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="h-4 w-4"
+              checked={!!form.debug}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, debug: e.target.checked }))
+              }
+            />
+            ブラウザ表示 (デバッグ)
+          </label>
+          <h2 className="text-lg font-medium">ログ</h2>
+          <pre className="border rounded p-3 bg-[rgba(0,0,0,0.02)] whitespace-pre-wrap text-sm min-h-24">
+            {logs.length ? logs.join('\n') : '(まだログはありません)'}
+          </pre>
+          {result && (
+            <div className="text-sm">
+              <div>結果: {result.success ? '成功' : '失敗'}</div>
+              {result.finalUrl ? (
+                <div>
+                  最終URL:{' '}
+                  <a
+                    className="underline"
+                    href={result.finalUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {result.finalUrl}
+                  </a>
+                </div>
+              ) : null}
+              {result.note ? <div>補足: {result.note}</div> : null}
+            </div>
+          )}
         </div>
       </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
     </div>
   );
 }

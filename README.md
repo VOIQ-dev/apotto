@@ -1,36 +1,81 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 問い合わせ自動送信ツール
 
-## Getting Started
+Webサイトのお問い合わせフォームを自動的に見つけて、フォームに入力・送信するためのNext.jsアプリケーションです。
 
-First, run the development server:
+## 機能
+
+- 🌐 指定したWebサイトに自動アクセス
+- 🔍 お問い合わせページを自動検出（「お問い合わせ」「Contact」などのリンクを検索）
+- 📝 フォームフィールドを自動識別して入力
+  - 会社名、担当者名、お名前、メールアドレス、電話番号、件名、本文
+- 🚀 フォームの自動送信
+- 📊 実行ログのリアルタイム表示
+- 🐛 デバッグモード（ブラウザを表示して動作確認可能）
+
+## 技術スタック
+
+- **Next.js 15** (App Router)
+- **React 19**
+- **TypeScript**
+- **Playwright** (ブラウザ自動操作)
+- **Tailwind CSS**
+
+## セットアップ
+
+### 必要な環境
+
+- Node.js 18以上
+- yarn または npm
+
+### インストール
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+# 依存関係のインストール
+yarn install
+# または
+npm install
+
+# Playwrightブラウザのインストール
+npx playwright install chromium
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 開発サーバーの起動
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+yarn dev
+# または
+npm run dev
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+ブラウザで [http://localhost:3000](http://localhost:3000) を開きます。
 
-## Learn More
+## 使い方
 
-To learn more about Next.js, take a look at the following resources:
+1. 対象サイトのURLを入力
+2. 送信したい情報を入力（会社名、名前、メールアドレスなど）
+3. 「開始」ボタンをクリック
+4. 自動的にブラウザが起動し、フォームを検出・入力・送信します
+5. ログで実行状況を確認できます
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### デバッグモード
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+「ブラウザ表示 (デバッグ)」チェックボックスを有効にすると、実際のブラウザウィンドウが表示され、動作を確認できます。
 
-## Deploy on Vercel
+## ビルド
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+yarn build
+# または
+npm run build
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## 注意事項
+
+- このツールは適切な用途でのみ使用してください
+- スパムや迷惑行為に使用しないでください
+- 各Webサイトの利用規約を確認してから使用してください
+- 一部のWebサイトでは、自動化ツールによる送信が禁止されている場合があります
+
+## ライセンス
+
+このプロジェクトはMITライセンスの下で公開されています。
