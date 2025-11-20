@@ -545,51 +545,54 @@ export default function AiCustomPage() {
   );
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <main className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-10">
-        <header className="flex flex-col gap-3">
-          <p className="text-sm font-semibold uppercase tracking-wide text-slate-500">
-            apotto
-          </p>
-          <h1 className="text-3xl font-semibold text-slate-900">
-            AIカスタム文面生成
-          </h1>
-          <p className="text-base text-slate-600">
-            Excel/CSVで最大100社を取り込み、送信者情報と相手企業情報を明確に分離したままAIにプロンプトを投げます。
-            ホームページURLが必須で、取り込み後は順番に自動生成を開始します。
-          </p>
-          <div className="grid gap-3 sm:grid-cols-3">
+    <div className="min-h-screen bg-background text-foreground pb-20">
+      <div className="sticky top-0 z-10 border-b border-border/60 bg-background/80 backdrop-blur-md mb-8">
+        <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between px-6">
+          <div className="flex items-center gap-2">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary font-bold">
+              A
+            </div>
+            <span className="text-lg font-bold tracking-tight">apotto</span>
+          </div>
+           <div className="text-sm font-medium text-muted-foreground">
+             AI Custom
+           </div>
+        </div>
+      </div>
+
+      <main className="mx-auto flex w-full max-w-5xl flex-col gap-10 px-6">
+        <header className="space-y-4">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight text-foreground">
+              AIカスタム文面生成
+            </h1>
+            <p className="mt-2 text-base text-muted-foreground max-w-3xl">
+              送信者情報とターゲット情報を入力し、AIがコンテキストに沿った最適な文面を自動生成します。
+              Excelでの一括取り込みにも対応しています。
+            </p>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-3">
             <StatCard label="登録カード" value={`${cards.length}社`} />
             <StatCard
               label="送信対象 (ON)"
               value={`${sendableCards.length}社`}
-              helper="各カード右上のチェックで切替"
+              helper="右上のチェックで切替"
             />
             <StatCard
               label="送信準備OK"
               value={`${sendableReadyCards.length}社`}
-              helper="チェックONかつ生成済み"
+              helper="チェックON & 生成済み"
             />
           </div>
         </header>
 
-        <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs uppercase tracking-wide text-slate-500">
-                SECTION 01
-              </p>
-              <h2 className="text-lg font-semibold text-slate-900">
-                自社情報（送信者）
-              </h2>
-            </div>
-            <span className="text-xs text-slate-500">
-              必須: {REQUIRED_SENDER_FIELDS.join(', ')}
-            </span>
-          </div>
-          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+        <section className="card-clean p-8">
+          <SectionHeader number="01" title="自社情報（送信者）" />
+          <div className="mt-6 grid gap-6 sm:grid-cols-2">
             <InputField
-              label="会社名 *"
+              label="会社名"
+              required
               value={senderProfile.companyName}
               onChange={(value) => handleSenderProfileChange('companyName', value)}
             />
@@ -604,13 +607,15 @@ export default function AiCustomPage() {
               onChange={(value) => handleSenderProfileChange('title', value)}
             />
             <InputField
-              label="担当者名 *"
+              label="担当者名"
+              required
               value={senderProfile.fullName}
               onChange={(value) => handleSenderProfileChange('fullName', value)}
             />
             <InputField
-              label="メールアドレス *"
+              label="メールアドレス"
               type="email"
+              required
               value={senderProfile.email}
               onChange={(value) => handleSenderProfileChange('email', value)}
             />
@@ -619,53 +624,42 @@ export default function AiCustomPage() {
               value={senderProfile.phone}
               onChange={(value) => handleSenderProfileChange('phone', value)}
             />
+            <div className="sm:col-span-2">
+              <InputField
+                label="件名"
+                required
+                value={senderProfile.subject}
+                onChange={(value) => handleSenderProfileChange('subject', value)}
+              />
+            </div>
           </div>
-          <InputField
-            className="mt-4"
-            label="件名 *"
-            value={senderProfile.subject}
-            onChange={(value) => handleSenderProfileChange('subject', value)}
-          />
           {senderMissingFields.length > 0 && (
-            <p className="mt-3 text-sm text-rose-500">
-              送信者情報の必須項目が不足しています: {senderMissingFields.join(', ')}
-            </p>
+            <div className="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">
+              必須項目が不足しています: {senderMissingFields.join(', ')}
+            </div>
           )}
         </section>
 
-        <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs uppercase tracking-wide text-slate-500">
-                SECTION 02
-              </p>
-              <h2 className="text-lg font-semibold text-slate-900">
-                商品理解とターゲット情報
-              </h2>
-            </div>
-            <span className="text-xs text-slate-500">
-              1to1精度を上げるための追加コンテキスト
-            </span>
-          </div>
-          <p className="mt-2 text-sm text-slate-600">
-            以下の項目を埋めるほど、AIが刺さる提案理由や使い方を自然に引用しやすくなります。
-            分かっている範囲だけでも構わないので、定期的にアップデートしてください。
-          </p>
-          <div className="mt-6 flex flex-col gap-5">
+        <section className="card-clean p-8">
+          <SectionHeader 
+            number="02" 
+            title="商品理解とターゲット情報"
+            description="AIが提案理由や使い方を自然に引用するための追加コンテキストです。"
+          />
+          
+          <div className="mt-8 flex flex-col gap-6">
             {PRODUCT_DETAIL_GROUPS.map((group) => (
               <div
                 key={group.id}
-                className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4"
+                className="rounded-xl border border-border bg-muted/30 p-5"
               >
-                <div>
-                  <h3 className="text-base font-semibold text-slate-900">
-                    {group.title}
-                  </h3>
-                  {group.description && (
-                    <p className="text-sm text-slate-600">{group.description}</p>
-                  )}
-                </div>
-                <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <h3 className="text-base font-semibold text-foreground mb-1">
+                  {group.title}
+                </h3>
+                {group.description && (
+                  <p className="text-sm text-muted-foreground mb-4">{group.description}</p>
+                )}
+                <div className="grid gap-4 md:grid-cols-2">
                   {group.fields.map((field) => (
                     <TextareaField
                       key={field.key}
@@ -675,7 +669,6 @@ export default function AiCustomPage() {
                         handleProductContextChange(field.key, value)
                       }
                       placeholder={field.helper}
-                      helper={field.helper}
                       rows={4}
                     />
                   ))}
@@ -685,83 +678,79 @@ export default function AiCustomPage() {
           </div>
         </section>
 
-        <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs uppercase tracking-wide text-slate-500">
-                SECTION 03
-              </p>
-              <h2 className="text-lg font-semibold text-slate-900">
-                Excel / CSV 取り込み
-              </h2>
-            </div>
+        <section className="card-clean p-8">
+          <div className="flex items-center justify-between mb-6">
+            <SectionHeader number="03" title="Excel / CSV 取り込み" />
             <button
               type="button"
               onClick={handleManualCardAdd}
-              className="rounded-full bg-slate-900 px-3 py-1 text-xs text-white hover:bg-slate-800"
+              className="btn-secondary text-xs"
             >
-              カードを追加
+              + カードを手動追加
             </button>
           </div>
-          <p className="mt-2 text-sm text-slate-600">
-            1列目: 担当者名 / 2列目: 部署 / 3列目: 役職 / 4列目: メール / 5列目: ホームページURL（必須）。
-            100社まで取り込み、読込完了後は自動的に生成キューへ投入します。
-          </p>
-          <label className="mt-4 flex cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50/80 px-4 py-8 text-center hover:border-slate-400">
+          
+          <div className="mt-2 mb-6 rounded-lg bg-blue-50/50 border border-blue-100 p-4 text-sm text-blue-700">
+             <p className="font-semibold mb-1">フォーマット仕様</p>
+             <p>1列目: 担当者名 / 2列目: 部署 / 3列目: 役職 / 4列目: メール / 5列目: ホームページURL（必須）</p>
+          </div>
+
+          <label className="group relative flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-border bg-muted/10 px-4 py-10 text-center transition-colors hover:border-primary/50 hover:bg-primary/5">
             <input
               type="file"
               accept=".xlsx,.xls,.csv"
               onChange={handleFileInputChange}
               className="sr-only"
             />
-            <span className="text-sm font-medium text-slate-700">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted text-muted-foreground group-hover:bg-primary/10 group-hover:text-primary mb-3">
+              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+              </svg>
+            </div>
+            <span className="text-sm font-medium text-foreground">
               ファイルを選択またはドロップ
             </span>
-            <span className="mt-1 text-xs text-slate-500">
-              .xlsx / .xls / .csv 対応
+            <span className="mt-1 text-xs text-muted-foreground">
+              .xlsx, .xls, .csv (Max 100 rows)
             </span>
           </label>
+
           {uploadState.fileName && (
-            <div className="mt-4 rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-600">
-              <p className="font-medium text-slate-900">{uploadState.fileName}</p>
-              <p>
-                取り込み {uploadState.importedCount} 件 / スキップ{' '}
-                {uploadState.skippedCount} 件
-              </p>
+            <div className="mt-4 flex items-center justify-between rounded-lg border border-border bg-muted/30 px-4 py-3">
+              <div>
+                <p className="text-sm font-medium text-foreground">{uploadState.fileName}</p>
+                <p className="text-xs text-muted-foreground">
+                  取り込み: {uploadState.importedCount} / スキップ: {uploadState.skippedCount}
+                </p>
+              </div>
+              {uploadState.error && (
+                <span className="text-xs text-rose-500">{uploadState.error}</span>
+              )}
             </div>
           )}
-          {uploadState.error && (
-            <p className="mt-3 text-sm text-rose-500">{uploadState.error}</p>
-          )}
-          <div className="mt-4 flex gap-3">
+          
+          <div className="mt-6 flex gap-3">
             <button
               type="button"
               onClick={handleQueuePendingCards}
-              className="flex-1 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              className="btn-secondary flex-1"
             >
               未生成カードを再キュー
             </button>
             <button
               type="button"
               onClick={handleClearCards}
-              className="flex-1 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              className="btn-secondary flex-1 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200"
             >
               カードをリセット
             </button>
           </div>
         </section>
 
-        <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs uppercase tracking-wide text-slate-500">
-                SECTION 03
-              </p>
-              <h2 className="text-lg font-semibold text-slate-900">
-                PDFライブラリとトラッキングURL
-              </h2>
-            </div>
-            <label className="rounded-full border border-slate-200 bg-slate-900/90 px-4 py-2 text-sm font-medium text-white hover:bg-slate-900">
+        <section className="card-clean p-8">
+          <div className="flex items-center justify-between mb-4">
+            <SectionHeader number="04" title="PDFライブラリ" />
+            <label className="btn-primary cursor-pointer">
               PDFを追加
               <input
                 type="file"
@@ -772,306 +761,298 @@ export default function AiCustomPage() {
               />
             </label>
           </div>
+
           {pdfAssets.length === 0 ? (
-            <p className="mt-4 text-sm text-slate-600">
-              まだPDFが登録されていません。AI文面から添付リンクを生成する場合はPDFをアップロードしてください。
+            <p className="text-sm text-muted-foreground bg-muted/30 p-4 rounded-lg text-center">
+              まだPDFが登録されていません。
             </p>
           ) : (
-            <ul className="mt-4 divide-y divide-slate-100">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 mt-6">
               {pdfAssets.map((pdf) => (
-                <li key={pdf.id} className="flex items-center justify-between py-3">
-                  <div>
-                    <p className="text-sm font-medium text-slate-900">{pdf.name}</p>
-                    <p className="text-xs text-slate-500">
-                      {formatBytes(pdf.size)} / {new Date(pdf.uploadedAt).toLocaleString()}
-                    </p>
+                <div key={pdf.id} className="group relative flex flex-col justify-between rounded-xl border border-border bg-card p-4 shadow-sm transition-all hover:shadow-md">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="h-8 w-8 flex-shrink-0 rounded bg-rose-100 text-rose-500 flex items-center justify-center">
+                         <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.627 0-12 5.373-12 12s5.373 12 12 12 12-5.373 12-12-5.373-12-12-12zm-1 17v-1h2v1h-2zm0-12v10h2v-10h-2z" fillOpacity="0"/><path d="M7 6h10v12h-10z" fill="none"/><path d="M11.25 2h1.5v1.5h-1.5z" fillOpacity="0"/><path d="M19.5 3h-15c-1.103 0-2 .897-2 2v14c0 1.103.897 2 2 2h15c1.103 0 2-.897 2-2v-14c0-1.103-.897-2-2-2zm-3 14h-9v-10h9v10z" opacity=".5"/><path d="M7 6h10v10h-10z" fillOpacity=".2"/></svg>
+                         <span className="text-xs font-bold">PDF</span>
+                      </div>
+                      <p className="text-sm font-medium text-foreground truncate max-w-[140px]" title={pdf.name}>{pdf.name}</p>
+                    </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => handlePdfRemove(pdf.id)}
-                    className="text-sm text-rose-500 hover:text-rose-600"
-                  >
-                    削除
-                  </button>
-                </li>
+                  <div className="mt-3 flex items-end justify-between">
+                    <span className="text-xs text-muted-foreground">{formatBytes(pdf.size)}</span>
+                    <button
+                      type="button"
+                      onClick={() => handlePdfRemove(pdf.id)}
+                      className="text-xs text-rose-500 hover:text-rose-700 hover:underline"
+                    >
+                      削除
+                    </button>
+                  </div>
+                </div>
               ))}
-            </ul>
+            </div>
           )}
         </section>
 
-        <section className="flex flex-col gap-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs uppercase tracking-wide text-slate-500">
-                SECTION 04
-              </p>
-              <h2 className="text-lg font-semibold text-slate-900">
-                企業カード一覧
-              </h2>
-            </div>
-            <p className="text-sm text-slate-500">
-              {sendableReadyCards.length} / {sendableCards.length} 社が送信条件を満たしています
+        <section className="space-y-4">
+          <div className="flex items-center justify-between px-2">
+            <SectionHeader number="05" title="企業カード一覧" />
+            <p className="text-sm font-medium text-muted-foreground">
+              <span className="text-primary font-bold">{sendableReadyCards.length}</span> / {sendableCards.length} 社 OK
             </p>
           </div>
+          
           {cards.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-10 text-center text-slate-500">
-              Excelを取り込むか「カードを追加」ボタンで手動追加してください。
+            <div className="rounded-2xl border border-dashed border-border bg-muted/10 p-12 text-center text-muted-foreground">
+              <p>Excelを取り込むか「カードを追加」してください</p>
             </div>
           ) : (
-            <div className="flex flex-col gap-4">
-              {cards.map((card) => {
-                const attachmentList = Object.values(card.attachments);
-                return (
-                  <div
-                    key={card.id}
-                    className="relative rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-100"
-                    aria-busy={card.status === 'generating'}
-                    aria-disabled={card.status === 'generating'}
-                  >
-                    {card.status === 'generating' && (
-                      <div className="absolute inset-0 z-10 rounded-2xl bg-white/60 backdrop-blur-[1px]" />
-                    )}
-                    {card.status === 'generating' && (
-                      <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
-                        <div className="flex items-center gap-3 rounded-full bg-white/80 px-4 py-2 ring-1 ring-slate-200">
-                          <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-900 border-t-transparent" />
-                          <span className="text-sm font-medium text-slate-800">AI生成中…</span>
-                        </div>
-                      </div>
-                    )}
-                    <div className="flex flex-wrap items-center gap-3">
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={card.sendEnabled}
-                          onChange={() => handleToggleSendEnabled(card.id)}
-                          disabled={card.status === 'generating'}
-                          className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-900"
-                        />
-                        <span className="text-sm font-medium text-slate-900">
-                          送信対象
-                        </span>
-                      </div>
-                      <span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">
-                        {card.homepageUrl || 'URL未入力'}
-                      </span>
-                      <StatusBadge status={card.status} />
-                      {card.errorMessage && (
-                        <span className="text-sm text-rose-500">{card.errorMessage}</span>
-                      )}
-                    </div>
-
-                    <div className="mt-4 grid gap-4 md:grid-cols-2">
-                      <InputField
-                        label="相手企業名"
-                        value={card.companyName}
-                        placeholder="例: 株式会社◯◯"
-                        onChange={(value) =>
-                          handleCardFieldChange(card.id, 'companyName', value)
-                        }
-                        disabled={card.status === 'generating'}
-                      />
-                      <InputField
-                        label="担当者名"
-                        value={card.contactName}
-                        placeholder="例: 山田様"
-                        onChange={(value) =>
-                          handleCardFieldChange(card.id, 'contactName', value)
-                        }
-                        disabled={card.status === 'generating'}
-                      />
-                      <InputField
-                        label="部署"
-                        value={card.department}
-                        onChange={(value) =>
-                          handleCardFieldChange(card.id, 'department', value)
-                        }
-                        disabled={card.status === 'generating'}
-                      />
-                      <InputField
-                        label="役職"
-                        value={card.title}
-                        onChange={(value) => handleCardFieldChange(card.id, 'title', value)}
-                        disabled={card.status === 'generating'}
-                      />
-                      <InputField
-                        label="担当者メール"
-                        type="email"
-                        value={card.email}
-                        onChange={(value) => handleCardFieldChange(card.id, 'email', value)}
-                        disabled={card.status === 'generating'}
-                      />
-                      <InputField
-                        label="ホームページURL *"
-                        value={card.homepageUrl}
-                        onChange={(value) =>
-                          handleCardFieldChange(
-                            card.id,
-                            'homepageUrl',
-                            normalizeHomepageUrl(value)
-                          )
-                        }
-                        disabled={card.status === 'generating'}
-                      />
-                      <InputField
-                        label="備考 / 追加メモ"
-                        value={card.notes}
-                        onChange={(value) => handleCardFieldChange(card.id, 'notes', value)}
-                        disabled={card.status === 'generating'}
-                      />
-                    </div>
-
-                    {pdfAssets.length > 0 && (
-                      <div className="mt-4">
-                        <p className="text-sm font-medium text-slate-800">添付PDF</p>
-                        <div className="mt-2 flex flex-wrap gap-3">
-                          {pdfAssets.map((pdf) => (
-                            <label
-                              key={pdf.id}
-                              className="flex items-center gap-2 text-sm text-slate-600"
-                            >
-                              <input
-                                type="checkbox"
-                                checked={Boolean(card.attachments[pdf.id])}
-                                onChange={(event) =>
-                                  handleAttachmentToggle(card.id, pdf.id, event.target.checked)
-                                }
-                                disabled={card.status === 'generating'}
-                                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-900"
-                              />
-                              {pdf.name}
-                            </label>
-                          ))}
-                        </div>
-                        {attachmentList.length > 0 && (
-                          <div className="mt-2 space-y-1 rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
-                            {attachmentList.map((attachment) => (
-                              <p key={attachment.token} className="break-all">
-                                {attachment.url}
-                              </p>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    <div className="mt-4 flex flex-col gap-3">
-                      <div className="flex items-center justify-between">
-                        <p className="text-sm font-medium text-slate-800">生成された文面</p>
-                        <button
-                          type="button"
-                          onClick={() => void handleGenerateEntry(card.id)}
-                          disabled={card.status === 'generating'}
-                          className="rounded-lg border border-slate-200 px-3 py-1 text-sm text-slate-700 hover:bg-slate-50"
-                        >
-                          このカードを生成
-                        </button>
-                      </div>
-                      <textarea
-                        value={card.generatedMessage}
-                        onChange={(event) =>
-                          handleMessageChange(card.id, event.target.value)
-                        }
-                        rows={6}
-                        placeholder="AI生成結果がここに表示されます。"
-                        disabled={card.status === 'generating'}
-                        className={`w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900 ${
-                          card.status === 'generating'
-                            ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                            : 'bg-white text-slate-800'
-                        }`}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="grid gap-6">
+              {cards.map((card) => (
+                <CardItem
+                  key={card.id}
+                  card={card}
+                  pdfAssets={pdfAssets}
+                  handleCardFieldChange={handleCardFieldChange}
+                  handleToggleSendEnabled={handleToggleSendEnabled}
+                  handleAttachmentToggle={handleAttachmentToggle}
+                  handleMessageChange={handleMessageChange}
+                  handleGenerateEntry={handleGenerateEntry}
+                />
+              ))}
             </div>
           )}
         </section>
 
         <section className="grid gap-6 lg:grid-cols-2">
-          <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs uppercase tracking-wide text-slate-500">
-                  SECTION 05
-                </p>
-                <h2 className="text-lg font-semibold text-slate-900">
-                  自動生成キュー
-                </h2>
-              </div>
-              <span className="text-xs text-slate-500">
-                {queueState.pendingIds.length} 件待機中
+          <div className="card-clean p-6">
+            <div className="flex items-center justify-between mb-4">
+               <SectionHeader number="06" title="自動生成キュー" />
+               <span className="text-xs font-medium bg-muted px-2 py-1 rounded text-muted-foreground">
+                {queueState.pendingIds.length} pending
               </span>
             </div>
-            <div className="mt-4 grid gap-3 text-sm text-slate-700">
-              <p>
-                状態:{' '}
-                <span className="font-medium">
-                  {queueState.running ? '生成中' : '待機中'}
-                </span>
-              </p>
-              <p>直近の完了: {queueState.lastProcessed || '-'}</p>
-              {queueState.error && (
-                <p className="text-rose-500">エラー: {queueState.error}</p>
-              )}
+
+            <div className="space-y-4">
+               <div className="rounded-lg border border-border bg-muted/30 p-4 text-sm">
+                 <div className="flex justify-between mb-1">
+                   <span className="text-muted-foreground">Status:</span>
+                   <span className={`font-medium ${queueState.running ? 'text-primary animate-pulse' : 'text-foreground'}`}>
+                      {queueState.running ? 'Running...' : 'Idle'}
+                   </span>
+                 </div>
+                 <div className="flex justify-between">
+                    <span className="text-muted-foreground">Last Processed:</span>
+                    <span className="text-foreground truncate max-w-[150px]">{queueState.lastProcessed || '-'}</span>
+                 </div>
+                 {queueState.error && (
+                    <div className="mt-2 pt-2 border-t border-border/50 text-rose-500 text-xs">
+                      Error: {queueState.error}
+                    </div>
+                 )}
+               </div>
+
+               <div className="flex gap-3">
+                  <button onClick={handleQueuePendingCards} className="btn-secondary flex-1 text-xs">
+                    リトライ
+                  </button>
+                  <button onClick={clearQueue} className="btn-secondary flex-1 text-xs">
+                    停止
+                  </button>
+               </div>
+
+               <button
+                  type="button"
+                  onClick={handleSimulateSend}
+                  disabled={isSending || sendableCards.length === 0}
+                  className="btn-primary w-full mt-2"
+                >
+                  {isSending ? '送信中...' : 'チェック済み企業へ一括送信 (モック)'}
+                </button>
             </div>
-            <div className="mt-4 flex gap-3">
-              <button
-                type="button"
-                onClick={handleQueuePendingCards}
-                className="flex-1 rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-              >
-                未生成を再投入
-              </button>
-              <button
-                type="button"
-                onClick={clearQueue}
-                className="flex-1 rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-              >
-                キューを停止
-              </button>
-            </div>
-            <button
-              type="button"
-              onClick={handleSimulateSend}
-              disabled={isSending || sendableCards.length === 0}
-              className="mt-4 w-full rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-slate-400"
-            >
-              {isSending ? '送信モック実行中...' : 'チェック済み企業を一括送信 (モック)'}
-            </button>
           </div>
 
-          <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs uppercase tracking-wide text-slate-500">
-                  SECTION 06
-                </p>
-                <h2 className="text-lg font-semibold text-slate-900">ログ</h2>
-              </div>
-              <button
-                type="button"
-                onClick={() => setLogs([])}
-                className="text-sm text-slate-500 hover:text-slate-700"
-              >
+          <div className="card-clean p-6 flex flex-col h-full max-h-[400px]">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-bold text-foreground uppercase tracking-wider">実行ログ</h3>
+              <button onClick={() => setLogs([])} className="text-xs text-muted-foreground hover:text-foreground">
                 クリア
               </button>
             </div>
-            <div className="mt-4 max-h-64 space-y-2 overflow-y-auto text-sm text-slate-700">
-              {logs.length === 0 ? (
-                <p className="text-slate-500">まだログはありません。</p>
-              ) : (
-                logs.map((log, index) => (
-                  <p key={`${log}-${index}`} className="rounded-lg bg-slate-50 px-3 py-2">
-                    {log}
-                  </p>
-                ))
-              )}
+            <div className="flex-1 overflow-y-auto space-y-2 pr-2">
+               {logs.length === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-8">ログはありません</p>
+               ) : (
+                 logs.map((log, i) => (
+                   <div key={i} className="text-xs p-2 rounded bg-muted/50 text-foreground font-mono break-all">
+                     {log}
+                   </div>
+                 ))
+               )}
             </div>
           </div>
         </section>
       </main>
+    </div>
+  );
+}
+
+function SectionHeader({ number, title, description }: { number: string; title: string; description?: string }) {
+  return (
+    <div>
+      <div className="flex items-center gap-2">
+        <span className="flex h-6 w-6 items-center justify-center rounded bg-primary/10 text-xs font-bold text-primary">
+          {number}
+        </span>
+        <h2 className="text-lg font-bold text-foreground">{title}</h2>
+      </div>
+      {description && (
+        <p className="mt-1 text-sm text-muted-foreground ml-8">{description}</p>
+      )}
+    </div>
+  );
+}
+
+function CardItem({
+  card,
+  pdfAssets,
+  handleCardFieldChange,
+  handleToggleSendEnabled,
+  handleAttachmentToggle,
+  handleMessageChange,
+  handleGenerateEntry
+}: {
+  card: CompanyCard;
+  pdfAssets: PdfAsset[];
+  handleCardFieldChange: any;
+  handleToggleSendEnabled: any;
+  handleAttachmentToggle: any;
+  handleMessageChange: any;
+  handleGenerateEntry: any;
+}) {
+  return (
+    <div className={`card-clean p-6 transition-all ${card.status === 'generating' ? 'ring-2 ring-primary/20' : ''}`}>
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border/50 pb-4 mb-4">
+        <div className="flex items-center gap-4">
+          <label className="flex items-center gap-2 cursor-pointer">
+             <div className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${card.sendEnabled ? 'bg-primary border-primary text-white' : 'bg-card border-muted-foreground/40'}`}>
+                {card.sendEnabled && <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
+             </div>
+             <input 
+               type="checkbox" 
+               checked={card.sendEnabled} 
+               onChange={() => handleToggleSendEnabled(card.id)}
+               className="sr-only"
+               disabled={card.status === 'generating'}
+             />
+             <span className="text-sm font-semibold text-foreground">送信対象</span>
+          </label>
+          
+          <div className="h-4 w-[1px] bg-border"></div>
+          
+          <div className="flex items-center gap-2">
+             <span className={`text-xs px-2 py-0.5 rounded-md border ${!card.homepageUrl ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-muted border-transparent text-muted-foreground'}`}>
+               {card.homepageUrl ? 'URLあり' : 'URLなし'}
+             </span>
+             <StatusBadge status={card.status} />
+          </div>
+        </div>
+        
+        <button
+           type="button"
+           onClick={() => void handleGenerateEntry(card.id)}
+           disabled={card.status === 'generating'}
+           className="btn-secondary text-xs py-1.5 h-8"
+        >
+           {card.status === 'generating' ? '生成中...' : 'このカードを生成'}
+        </button>
+      </div>
+
+      <div className="grid gap-6 md:grid-cols-2">
+        <div className="space-y-4">
+           <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">企業情報</h4>
+           <div className="grid gap-3">
+              <InputField
+                label="相手企業名"
+                value={card.companyName}
+                placeholder="例: 株式会社◯◯"
+                onChange={(value) => handleCardFieldChange(card.id, 'companyName', value)}
+                disabled={card.status === 'generating'}
+              />
+              <div className="grid grid-cols-2 gap-3">
+                 <InputField
+                  label="担当者名"
+                  value={card.contactName}
+                  placeholder="例: 山田様"
+                  onChange={(value) => handleCardFieldChange(card.id, 'contactName', value)}
+                  disabled={card.status === 'generating'}
+                />
+                <InputField
+                  label="役職"
+                  value={card.title}
+                  onChange={(value) => handleCardFieldChange(card.id, 'title', value)}
+                  disabled={card.status === 'generating'}
+                />
+              </div>
+              <InputField
+                label="HP URL *"
+                value={card.homepageUrl}
+                onChange={(value) => handleCardFieldChange(card.id, 'homepageUrl', normalizeHomepageUrl(value))}
+                disabled={card.status === 'generating'}
+              />
+           </div>
+        </div>
+
+        <div className="space-y-4">
+           <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">生成コンテンツ</h4>
+           <div className="relative">
+              <textarea
+                value={card.generatedMessage}
+                onChange={(event) => handleMessageChange(card.id, event.target.value)}
+                rows={8}
+                placeholder="AI生成結果がここに表示されます..."
+                disabled={card.status === 'generating'}
+                className="input-clean min-h-[200px] resize-y font-mono text-sm leading-relaxed"
+              />
+              {card.status === 'generating' && (
+                 <div className="absolute inset-0 flex items-center justify-center bg-white/50 backdrop-blur-[1px] rounded-xl">
+                    <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-full shadow-lg border border-border">
+                       <span className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                       <span className="text-xs font-medium text-foreground">Thinking...</span>
+                    </div>
+                 </div>
+              )}
+           </div>
+        </div>
+      </div>
+      
+      {/* Attachments */}
+      {pdfAssets.length > 0 && (
+         <div className="mt-6 pt-4 border-t border-border/50">
+            <p className="text-xs font-medium text-muted-foreground mb-3">添付資料を選択</p>
+            <div className="flex flex-wrap gap-3">
+               {pdfAssets.map((pdf) => (
+                  <label key={pdf.id} className="inline-flex items-center gap-2 cursor-pointer select-none p-1.5 rounded-lg hover:bg-muted/50 transition-colors">
+                     <input
+                        type="checkbox"
+                        checked={Boolean(card.attachments[pdf.id])}
+                        onChange={(event) => handleAttachmentToggle(card.id, pdf.id, event.target.checked)}
+                        disabled={card.status === 'generating'}
+                        className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                      />
+                     <span className="text-sm text-foreground">{pdf.name}</span>
+                  </label>
+               ))}
+            </div>
+         </div>
+      )}
+      
+      {card.errorMessage && (
+         <div className="mt-4 p-3 bg-rose-50 border border-rose-100 rounded-lg text-xs text-rose-600">
+            {card.errorMessage}
+         </div>
+      )}
     </div>
   );
 }
@@ -1084,6 +1065,7 @@ function InputField({
   placeholder,
   className,
   disabled,
+  required
 }: {
   label: string;
   value: string;
@@ -1092,19 +1074,20 @@ function InputField({
   placeholder?: string;
   className?: string;
   disabled?: boolean;
+  required?: boolean;
 }) {
   return (
-    <label className={`flex flex-col gap-1 ${className ?? ''}`}>
-      <span className="text-sm font-medium text-slate-700">{label}</span>
+    <label className={`flex flex-col gap-1.5 ${className ?? ''}`}>
+      <span className="text-xs font-semibold text-muted-foreground">
+        {label} {required && <span className="text-rose-500">*</span>}
+      </span>
       <input
         type={type}
         value={value}
         placeholder={placeholder}
         onChange={(event) => onChange(event.target.value)}
         disabled={disabled}
-        className={`w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900 ${
-          disabled ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-white text-slate-900'
-        }`}
+        className={`input-clean ${disabled ? 'opacity-60 cursor-not-allowed bg-muted' : ''}`}
       />
     </label>
   );
@@ -1128,17 +1111,17 @@ function TextareaField({
   rows?: number;
 }) {
   return (
-    <label className={`flex flex-col gap-1 ${className ?? ''}`}>
-      <span className="text-sm font-medium text-slate-700">{label}</span>
+    <label className={`flex flex-col gap-1.5 ${className ?? ''}`}>
+      <span className="text-xs font-semibold text-muted-foreground">{label}</span>
       {helper && (
-        <span className="text-xs text-slate-500">{helper}</span>
+        <span className="text-xs text-muted-foreground opacity-80">{helper}</span>
       )}
       <textarea
         value={value}
         rows={rows}
         placeholder={placeholder}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900"
+        className="input-clean resize-y"
       />
     </label>
   );
@@ -1154,36 +1137,34 @@ function StatCard({
   helper?: string;
 }) {
   return (
-    <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+    <div className="card-clean p-4 flex flex-col justify-between">
+      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
         {label}
       </p>
-      <p className="mt-2 text-2xl font-semibold text-slate-900">{value}</p>
-      {helper && <p className="text-xs text-slate-500">{helper}</p>}
+      <p className="mt-2 text-2xl font-bold text-foreground">{value}</p>
+      {helper && <p className="mt-1 text-xs text-muted-foreground">{helper}</p>}
     </div>
   );
 }
 
 function StatusBadge({ status }: { status: CompanyCard['status'] }) {
-  const label =
-    status === 'ready'
-      ? 'READY'
-      : status === 'generating'
-      ? 'GENERATING'
-      : status === 'error'
-      ? 'ERROR'
-      : 'PENDING';
-  const color =
-    status === 'ready'
-      ? 'bg-emerald-50 text-emerald-700'
-      : status === 'generating'
-      ? 'bg-amber-50 text-amber-700'
-      : status === 'error'
-      ? 'bg-rose-50 text-rose-700'
-      : 'bg-slate-100 text-slate-600';
+  const styles = {
+    ready: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    generating: 'bg-amber-50 text-amber-700 border-amber-200 animate-pulse',
+    error: 'bg-rose-50 text-rose-700 border-rose-200',
+    pending: 'bg-slate-100 text-slate-600 border-slate-200',
+  };
+  
+  const labels = {
+    ready: '完了',
+    generating: '生成中',
+    error: 'エラー',
+    pending: '待機',
+  };
+
   return (
-    <span className={`rounded-full px-3 py-1 text-xs font-semibold ${color}`}>
-      {label}
+    <span className={`rounded-md border px-2 py-0.5 text-xs font-medium ${styles[status]}`}>
+      {labels[status]}
     </span>
   );
 }
@@ -1275,4 +1256,3 @@ function removeFromQueue(queue: string[], target: string): string[] {
   if (index === -1) return queue;
   return [...queue.slice(0, index), ...queue.slice(index + 1)];
 }
-

@@ -44,21 +44,38 @@ export default function DashboardPage() {
   );
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <main className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-10">
-        <header className="flex flex-col gap-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-            apotto
-          </p>
-          <h1 className="text-3xl font-semibold text-slate-900">管理ダッシュボード</h1>
-          <p className="text-base text-slate-600">
-            PDF閲覧回数・企業別反応率・時間帯ごとの興味関心を可視化し、営業資料のどこに改善余地があるかを把握します。
-            Supabaseからリアルタイムに取得できない場合は直近データのスナップショットを表示します。
-          </p>
+    <div className="min-h-screen bg-background text-foreground">
+      {/* Navigation / Header Area */}
+      <div className="sticky top-0 z-10 border-b border-border/60 bg-background/80 backdrop-blur-md">
+        <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between px-6">
+          <div className="flex items-center gap-2">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary font-bold">
+              A
+            </div>
+            <span className="text-lg font-bold tracking-tight">apotto</span>
+          </div>
+          <div className="text-sm font-medium text-muted-foreground">
+            Dashboard
+          </div>
+        </div>
+      </div>
+
+      <main className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-6 py-10">
+        <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+          <div className="space-y-1">
+            <h1 className="text-3xl font-bold tracking-tight text-foreground">管理ダッシュボード</h1>
+            <p className="text-base text-muted-foreground max-w-2xl">
+              資料の閲覧状況や反応率を可視化し、営業活動の改善ポイントを発見します。
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+             {/* Optional: Date display or extra actions */}
+          </div>
         </header>
 
-        <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
-          <div className="flex flex-wrap items-center gap-4">
+        {/* Filter Section */}
+        <section className="card-clean sticky top-20 z-10 md:static">
+          <div className="flex flex-wrap items-end gap-4">
             <FilterSelect
               label="期間"
               value={filters.range}
@@ -72,10 +89,10 @@ export default function DashboardPage() {
               }
             />
             <FilterSelect
-              label="PDF"
+              label="PDF資料"
               value={filters.pdfId}
               options={pdfOptions.map((id) => ({
-                label: id === 'all' ? 'すべて' : metrics.data.pdfPerformance.find((pdf) => pdf.id === id)?.name ?? id,
+                label: id === 'all' ? 'すべての資料' : metrics.data.pdfPerformance.find((pdf) => pdf.id === id)?.name ?? id,
                 value: id,
               }))}
               onChange={(value) => setFilters((prev) => ({ ...prev, pdfId: value }))}
@@ -84,130 +101,164 @@ export default function DashboardPage() {
               label="企業"
               value={filters.company}
               options={companyOptions.map((id) => ({
-                label: id === 'all' ? 'すべて' : id,
+                label: id === 'all' ? 'すべての企業' : id,
                 value: id,
               }))}
               onChange={(value) => setFilters((prev) => ({ ...prev, company: value }))}
             />
-            {metrics.loading && (
-              <span className="rounded-full bg-slate-900/90 px-3 py-1 text-xs text-white">
-                更新中...
-              </span>
-            )}
+            
+            <div className="ml-auto flex items-center">
+              {metrics.loading && (
+                <span className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
+                  <span className="h-2 w-2 animate-pulse rounded-full bg-primary" />
+                  更新中...
+                </span>
+              )}
+            </div>
           </div>
           {metrics.error && (
-            <p className="mt-3 text-sm text-amber-600">
-              Supabaseからの取得に失敗したためスナップショットを表示しています: {metrics.error}
-            </p>
+            <div className="mt-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-700 dark:bg-amber-900/20 dark:text-amber-400">
+              ⚠️ {metrics.error} (スナップショットを表示中)
+            </div>
           )}
         </section>
 
+        {/* Summary Cards */}
         <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {metrics.data.summary.map((item) => (
             <div
               key={item.label}
-              className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm"
+              className="card-clean flex flex-col justify-between"
             >
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                {item.label}
-              </p>
-              <p className="mt-2 text-2xl font-semibold text-slate-900">{item.value}</p>
-              {item.helper && <p className="text-xs text-slate-500">{item.helper}</p>}
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  {item.label}
+                </p>
+                <p className="mt-2 text-3xl font-bold text-foreground tabular-nums">{item.value}</p>
+              </div>
+              {item.helper && (
+                <p className="mt-2 text-xs text-muted-foreground">{item.helper}</p>
+              )}
             </div>
           ))}
         </section>
 
+        {/* Charts Section */}
         <section className="grid gap-6 lg:grid-cols-2">
-          <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-slate-900">資料別の閲覧傾向</h2>
-              <span className="text-xs text-slate-500">棒グラフ (閲覧回数)</span>
+          <div className="card-clean">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-lg font-bold text-foreground">資料別の閲覧傾向</h2>
+              <span className="text-xs font-medium text-muted-foreground bg-muted px-2 py-1 rounded-md">Top 5</span>
             </div>
-            <div className="mt-4 space-y-4">
+            <div className="space-y-5">
               {metrics.data.pdfPerformance.map((pdf) => {
                 const topViews = metrics.data.pdfPerformance[0]?.views || 1;
                 const percentage = Math.min(100, (pdf.views / topViews) * 100);
                 return (
                 <div key={pdf.id}>
-                  <div className="flex items-center justify-between text-sm text-slate-700">
-                    <span>{pdf.name}</span>
-                    <span>{pdf.views} 回</span>
+                  <div className="flex items-center justify-between text-sm mb-2">
+                    <span className="font-medium text-foreground truncate pr-4">{pdf.name}</span>
+                    <div className="flex items-center gap-4 text-muted-foreground tabular-nums">
+                      <span>{pdf.views} views</span>
+                    </div>
                   </div>
-                  <div className="mt-1 h-2 rounded-full bg-slate-100">
+                  <div className="relative h-2.5 w-full overflow-hidden rounded-full bg-muted">
                     <div
-                      className="h-2 rounded-full bg-slate-900"
-                        style={{ width: `${percentage}%` }}
-                      />
+                      className="absolute left-0 top-0 h-full rounded-full bg-primary transition-all duration-500 ease-out"
+                      style={{ width: `${percentage}%` }}
+                    />
                   </div>
-                  <p className="mt-1 text-xs text-slate-500">
-                    ユニーク閲覧 {pdf.uniqueViews} 回
-                  </p>
+                  <div className="mt-1 text-right text-xs text-muted-foreground">
+                    Unique: {pdf.uniqueViews}
+                  </div>
                 </div>
                 );
               })}
             </div>
           </div>
 
-          <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-slate-900">時間帯ごとの反応</h2>
-              <span className="text-xs text-slate-500">折れ線 (ビュー数)</span>
+          <div className="card-clean">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-lg font-bold text-foreground">時間帯ごとの反応</h2>
+              <span className="text-xs font-medium text-muted-foreground bg-muted px-2 py-1 rounded-md">Peak Time</span>
             </div>
-            <div className="mt-6 grid grid-cols-4 gap-4 text-center text-sm text-slate-600">
-              {metrics.data.timeline.map((slot) => (
-                <div key={slot.slot} className="flex flex-col items-center">
-                  <div className="flex h-24 w-8 items-end rounded-full bg-slate-100">
-                    <div
-                      className="w-full rounded-full bg-slate-900"
-                      style={{ height: `${Math.min(100, slot.views)}%` }}
-                    />
-                  </div>
-                  <span className="mt-2 text-xs">{slot.slot}</span>
-                  <span className="text-xs text-slate-500">{slot.views}回</span>
-                </div>
-              ))}
+            <div className="flex h-64 items-end justify-between gap-2 px-2">
+              {metrics.data.timeline.map((slot, index) => {
+                  const maxVal = Math.max(...metrics.data.timeline.map(t => t.views));
+                  const heightPct = maxVal > 0 ? (slot.views / maxVal) * 100 : 0;
+                  
+                  return (
+                    <div key={slot.slot} className="group flex flex-1 flex-col items-center gap-2">
+                      <div className="relative w-full flex-1 flex items-end rounded-t-lg bg-muted/30 hover:bg-muted/50 transition-colors">
+                         <div 
+                           className="w-full rounded-t-md bg-primary/80 transition-all duration-500 ease-out group-hover:bg-primary"
+                           style={{ height: `${Math.max(4, heightPct)}%` }}
+                         />
+                         {/* Tooltip-ish */}
+                         <div className="absolute -top-8 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-popover text-popover-foreground text-xs px-2 py-1 rounded shadow-lg pointer-events-none whitespace-nowrap">
+                           {slot.views} views
+                         </div>
+                      </div>
+                      <span className="text-xs font-medium text-muted-foreground text-center truncate w-full">
+                        {slot.slot}
+                      </span>
+                    </div>
+                  );
+              })}
             </div>
           </div>
         </section>
 
         <section className="grid gap-6 lg:grid-cols-2">
-          <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
-            <h2 className="text-lg font-semibold text-slate-900">企業別の反応率</h2>
-            <ul className="mt-4 space-y-3">
-              {metrics.data.companyEngagement.map((entry) => (
-                <li key={entry.company} className="flex items-center justify-between">
-                  <span className="text-sm text-slate-700">{entry.company}</span>
-                  <span className="text-sm font-semibold text-slate-900">
-                    {entry.rate.toFixed(1)}%
-                  </span>
-                </li>
+          <div className="card-clean">
+            <h2 className="text-lg font-bold text-foreground mb-4">企業別の反応率</h2>
+            <div className="space-y-1">
+              {metrics.data.companyEngagement.map((entry, i) => (
+                <div key={entry.company} className="flex items-center justify-between py-3 border-b border-border/50 last:border-0">
+                  <div className="flex items-center gap-3">
+                    <div className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold ${
+                      i === 0 ? 'bg-amber-100 text-amber-700' : 'bg-muted text-muted-foreground'
+                    }`}>
+                      {i + 1}
+                    </div>
+                    <span className="text-sm font-medium text-foreground">{entry.company}</span>
+                  </div>
+                  <div className="text-right">
+                     <span className="text-sm font-bold text-foreground tabular-nums">{entry.rate.toFixed(1)}%</span>
+                  </div>
+                </div>
               ))}
-            </ul>
+            </div>
           </div>
 
-          <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
-            <h2 className="text-lg font-semibold text-slate-900">最新の閲覧ログ</h2>
-            <div className="mt-4 max-h-72 overflow-y-auto">
-              <table className="w-full text-left text-sm text-slate-700">
-                <thead>
-                  <tr className="text-xs uppercase text-slate-500">
-                    <th className="pb-2">閲覧者</th>
-                    <th className="pb-2">企業</th>
-                    <th className="pb-2">PDF</th>
-                    <th className="pb-2">閲覧日時</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {metrics.data.logs.map((log) => (
-                    <tr key={`${log.viewer}-${log.viewedAt}`}>
-                      <td className="py-2 text-slate-900">{log.viewer}</td>
-                      <td className="py-2">{log.company}</td>
-                      <td className="py-2">{log.pdf}</td>
-                      <td className="py-2 text-sm text-slate-500">{log.viewedAt}</td>
+          <div className="card-clean flex flex-col">
+            <h2 className="text-lg font-bold text-foreground mb-4">最新の閲覧ログ</h2>
+            <div className="flex-1 overflow-hidden rounded-xl border border-border">
+              <div className="h-full overflow-y-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-muted/50 text-xs uppercase text-muted-foreground sticky top-0 backdrop-blur-sm">
+                    <tr>
+                      <th className="px-4 py-3 font-medium">閲覧者</th>
+                      <th className="px-4 py-3 font-medium">資料</th>
+                      <th className="px-4 py-3 font-medium text-right">日時</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-border/50">
+                    {metrics.data.logs.map((log, idx) => (
+                      <tr key={`${log.viewer}-${log.viewedAt}-${idx}`} className="hover:bg-muted/30 transition-colors">
+                        <td className="px-4 py-3">
+                          <div className="font-medium text-foreground">{log.company}</div>
+                          <div className="text-xs text-muted-foreground">{log.viewer}</div>
+                        </td>
+                        <td className="px-4 py-3 text-foreground truncate max-w-[120px]">{log.pdf}</td>
+                        <td className="px-4 py-3 text-right text-xs text-muted-foreground whitespace-nowrap">
+                          {log.viewedAt}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         </section>
@@ -228,19 +279,26 @@ function FilterSelect({
   onChange: (value: string) => void;
 }) {
   return (
-    <label className="flex flex-col text-sm text-slate-600">
-      {label}
-      <select
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="mt-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900"
-      >
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
+    <label className="flex flex-col gap-1.5">
+      <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{label}</span>
+      <div className="relative">
+        <select
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          className="appearance-none w-full min-w-[140px] rounded-xl border border-border bg-background px-3 py-2 text-sm font-medium text-foreground shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/10"
+        >
+          {options.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-muted-foreground">
+          <svg className="h-4 w-4 fill-current" viewBox="0 0 20 20">
+            <path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" fillRule="evenodd" />
+          </svg>
+        </div>
+      </div>
     </label>
   );
 }
@@ -417,4 +475,3 @@ function buildMockData(filters: DashboardFilters): DashboardData {
     logs,
   };
 }
-
