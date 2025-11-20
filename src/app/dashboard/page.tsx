@@ -183,7 +183,7 @@ export default function DashboardPage() {
               <span className="text-xs font-medium text-muted-foreground bg-muted px-2 py-1 rounded-md">Peak Time</span>
             </div>
             <div className="flex h-64 items-end justify-between gap-2 px-2">
-              {metrics.data.timeline.map((slot, index) => {
+              {metrics.data.timeline.map((slot) => {
                   const maxVal = Math.max(...metrics.data.timeline.map(t => t.views));
                   const heightPct = maxVal > 0 ? (slot.views / maxVal) * 100 : 0;
                   

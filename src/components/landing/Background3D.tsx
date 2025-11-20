@@ -1,17 +1,14 @@
 'use client';
 
-import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { Float, Instance, Instances, Environment, Lightformer } from '@react-three/drei';
+import { Canvas, useFrame } from '@react-three/fiber';
+import { Float, Environment, Lightformer } from '@react-three/drei';
 import { EffectComposer, N8AO, TiltShift2, Bloom } from '@react-three/postprocessing';
-import { useMemo, useRef, useState, useEffect } from 'react';
+import { useMemo, useRef, useEffect } from 'react';
 import * as THREE from 'three';
-import { MathUtils } from 'three';
 
 function Particles({ count = 200, mouse }: { count?: number; mouse: React.MutableRefObject<[number, number]> }) {
   const mesh = useRef<THREE.InstancedMesh>(null);
   const light = useRef<THREE.PointLight>(null);
-  const { size, viewport } = useThree();
-  const aspect = size.width / viewport.width;
 
   const dummy = useMemo(() => new THREE.Object3D(), []);
   
@@ -30,12 +27,13 @@ function Particles({ count = 200, mouse }: { count?: number; mouse: React.Mutabl
     return temp;
   }, [count]);
 
-  useFrame((state) => {
+  useFrame(() => {
     if (!mesh.current) return;
 
     // Run through particles and update positions
     particles.forEach((particle, i) => {
-      let { t, factor, speed, xFactor, yFactor, zFactor } = particle;
+      let { t } = particle;
+      const { factor, speed, xFactor, yFactor, zFactor } = particle;
       
       // Time evolution
       t = particle.t += speed / 2;
@@ -109,7 +107,7 @@ function Scene() {
       </Float>
 
       {/* Post Processing Effects */}
-      <EffectComposer disableNormalPass>
+      <EffectComposer enableNormalPass={false}>
         <N8AO distanceFalloff={1} aoRadius={2} intensity={2} />
         <Bloom luminanceThreshold={0.5} mipmapBlur intensity={0.8} radius={0.4} />
         <TiltShift2 blur={0.15} />
