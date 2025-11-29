@@ -9,6 +9,7 @@ import {
 } from 'react';
 import { read, utils } from 'xlsx';
 
+import { AppSidebar } from '@/components/AppSidebar';
 import { simulateAiWorkflow, type AiWorkflowRequest } from '@/lib/workflows';
 import {
   PRODUCT_CONTEXT_GROUPS,
@@ -90,6 +91,16 @@ const REQUIRED_SENDER_FIELDS: Array<keyof SenderProfile> = [
 
 const PRODUCT_DETAIL_GROUPS = PRODUCT_CONTEXT_GROUPS;
 
+const SENDER_FIELD_LABELS: Record<keyof SenderProfile, string> = {
+  companyName: '会社名',
+  department: '部署',
+  title: '役職',
+  fullName: '担当者名',
+  email: 'メールアドレス',
+  phone: '電話番号',
+  subject: '件名',
+};
+
 
 export default function AiCustomPage() {
   const [senderProfile, setSenderProfile] = useState<SenderProfile>(
@@ -110,6 +121,10 @@ export default function AiCustomPage() {
   const [productContext, setProductContext] = useState<ProductContext>(
     createEmptyProductContext
   );
+  const [autoSendEnabled, setAutoSendEnabled] = useState(false);
+  const [autoRunStatus, setAutoRunStatus] = useState<'idle' | 'running' | 'error' | 'done'>('idle');
+  const [autoRunMessage, setAutoRunMessage] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   const senderMissingFields = useMemo(
     () =>
@@ -127,6 +142,9 @@ export default function AiCustomPage() {
     () => sendableCards.filter((card) => card.status === 'ready'),
     [sendableCards]
   );
+
+  const remainingCapacity = Math.max(0, MAX_COMPANY_ROWS - cards.length);
+  const latestLog = logs.length > 0 ? logs[logs.length - 1] : null;
 
   const enqueueGeneration = useCallback(
     (ids: string[], replace = false) => {
@@ -289,69 +307,6 @@ export default function AiCustomPage() {
     setLogs((prev) => [...prev, 'カードをリセットしました。']);
   }, [clearQueue]);
 
-  const handleExcelUpload = useCallback(
-    async (file: File) => {
-      setUploadState((prev) => ({
-        ...prev,
-        fileName: file.name,
-        error: undefined,
-      }));
-
-      try {
-        const rows = await readSheetRows(file);
-        if (rows.length <= 1) {
-          throw new Error('データ行が存在しません。');
-        }
-
-        const dataRows = rows
-          .slice(1)
-          .map((row) => row.map((cell) => sanitize(cell)))
-          .filter((row) => row.some((cell) => cell.length > 0));
-
-        const withUrl = dataRows.filter((row) => row[4]?.length > 0);
-        const truncated = withUrl.slice(0, MAX_COMPANY_ROWS);
-
-        const skippedMissingUrl = dataRows.length - withUrl.length;
-        const skippedByLimit = Math.max(withUrl.length - truncated.length, 0);
-
-        const nextCards = truncated.map((row) => ({
-          ...createEmptyCard(),
-          companyName: deriveCompanyNameFromUrl(row[4] ?? ''),
-          contactName: row[0] ?? '',
-          department: row[1] ?? '',
-          title: row[2] ?? '',
-          email: row[3] ?? '',
-          homepageUrl: normalizeHomepageUrl(row[4] ?? ''),
-        }));
-
-        setCards(nextCards);
-        enqueueGeneration(
-          nextCards.map((card) => card.id),
-          true
-        );
-        setUploadState({
-          fileName: file.name,
-          importedCount: nextCards.length,
-          skippedCount: skippedMissingUrl + skippedByLimit,
-          lastImportedAt: Date.now(),
-        });
-        setLogs((prev) => [
-          ...prev,
-          `Excel読み込み: ${nextCards.length}件をカード化し、自動生成を開始しました。`,
-        ]);
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : 'Excelの読み込みに失敗しました。';
-        setUploadState((prev) => ({
-          ...prev,
-          error: message,
-        }));
-        setLogs((prev) => [...prev, `Excel読み込みエラー: ${message}`]);
-      }
-    },
-    [enqueueGeneration]
-  );
-
   const handleGenerateEntry = useCallback(
     async (cardId: string) => {
       const target = cards.find((card) => card.id === cardId);
@@ -470,6 +425,23 @@ export default function AiCustomPage() {
       });
   }, [handleGenerateEntry, queueState.pendingIds, queueState.running]);
 
+  useEffect(() => {
+    if (!autoSendEnabled) {
+      setAutoRunStatus('idle');
+      setAutoRunMessage(null);
+    }
+  }, [autoSendEnabled]);
+
+  useEffect(() => {
+    if (autoRunStatus === 'done') {
+      const timer = setTimeout(() => {
+        setAutoRunStatus('idle');
+        setAutoRunMessage(null);
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [autoRunStatus]);
+
   const handleQueuePendingCards = useCallback(() => {
     const pendingIds = cards
       .filter((card) => card.status !== 'ready' && card.homepageUrl.trim())
@@ -524,6 +496,108 @@ export default function AiCustomPage() {
     }
   }, [sendableCards, senderProfile]);
 
+  const runAutoWorkflow = useCallback(
+    async (cardIds: string[]) => {
+      if (!autoSendEnabled || !cardIds.length) return;
+      if (autoRunStatus === 'running') return;
+
+      setAutoRunStatus('running');
+      setAutoRunMessage('AI生成を開始します...');
+      setLogs((prev) => [...prev, '⚡ 自動送信モードを開始しました。']);
+
+      try {
+        for (const id of cardIds) {
+          const targetCard = cards.find((card) => card.id === id);
+          const label = targetCard?.companyName || targetCard?.contactName || id;
+          setAutoRunMessage(`AI生成中: ${label}`);
+          await handleGenerateEntry(id);
+        }
+
+        setAutoRunMessage('フォーム送信中...');
+        await handleSimulateSend();
+
+        setAutoRunStatus('done');
+        setAutoRunMessage('自動送信が完了しました。');
+        setLogs((prev) => [...prev, '✅ 自動送信が完了しました。']);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : '自動送信フローでエラーが発生しました。';
+        setAutoRunStatus('error');
+        setAutoRunMessage(message);
+        setLogs((prev) => [...prev, `⚠️ 自動送信エラー: ${message}`]);
+      }
+    },
+    [autoSendEnabled, autoRunStatus, cards, handleGenerateEntry, handleSimulateSend]
+  );
+
+  const handleExcelUpload = useCallback(
+    async (file: File) => {
+      setUploadState((prev) => ({
+        ...prev,
+        fileName: file.name,
+        error: undefined,
+      }));
+
+      try {
+        const rows = await readSheetRows(file);
+        if (rows.length <= 1) {
+          throw new Error('データ行が存在しません。');
+        }
+
+        const dataRows = rows
+          .slice(1)
+          .map((row) => row.map((cell) => sanitize(cell)))
+          .filter((row) => row.some((cell) => cell.length > 0));
+
+        const withUrl = dataRows.filter((row) => row[4]?.length > 0);
+        const truncated = withUrl.slice(0, MAX_COMPANY_ROWS);
+
+        const skippedMissingUrl = dataRows.length - withUrl.length;
+        const skippedByLimit = Math.max(withUrl.length - truncated.length, 0);
+
+        const nextCards = truncated.map((row) => ({
+          ...createEmptyCard(),
+          companyName: deriveCompanyNameFromUrl(row[4] ?? ''),
+          contactName: row[0] ?? '',
+          department: row[1] ?? '',
+          title: row[2] ?? '',
+          email: row[3] ?? '',
+          homepageUrl: normalizeHomepageUrl(row[4] ?? ''),
+        }));
+
+        const newCardIds = nextCards.map((card) => card.id);
+
+        setCards(nextCards);
+        enqueueGeneration(newCardIds, true);
+        setUploadState({
+          fileName: file.name,
+          importedCount: nextCards.length,
+          skippedCount: skippedMissingUrl + skippedByLimit,
+          lastImportedAt: Date.now(),
+        });
+        setLogs((prev) => [
+          ...prev,
+          `Excel読み込み: ${nextCards.length}件をカード化し、自動生成を開始しました。`,
+        ]);
+
+        if (autoSendEnabled) {
+          setTimeout(() => {
+            void runAutoWorkflow(newCardIds);
+          }, 0);
+        }
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : 'Excelの読み込みに失敗しました。';
+        setUploadState((prev) => ({
+          ...prev,
+          error: message,
+        }));
+        setLogs((prev) => [...prev, `Excel読み込みエラー: ${message}`]);
+      }
+    },
+    [autoSendEnabled, enqueueGeneration, runAutoWorkflow]
+  );
+
   const handleFileInputChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
       const file = event.target.files?.[0];
@@ -544,23 +618,47 @@ export default function AiCustomPage() {
     [handlePdfUpload]
   );
 
-  return (
-    <div className="min-h-screen bg-background text-foreground pb-20">
-      <div className="sticky top-0 z-10 border-b border-border/60 bg-background/80 backdrop-blur-md mb-8">
-        <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between px-6">
-          <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary font-bold">
-              A
-            </div>
-            <span className="text-lg font-bold tracking-tight">apotto</span>
-          </div>
-          <div className="text-sm font-medium text-muted-foreground">
-            AI Custom
-          </div>
-        </div>
-      </div>
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  }, []);
 
-      <main className="mx-auto flex w-full max-w-5xl flex-col gap-10 px-6">
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  }, []);
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDragging(false);
+      const file = e.dataTransfer.files?.[0];
+      if (file) {
+        void handleExcelUpload(file);
+      }
+    },
+    [handleExcelUpload]
+  );
+
+  const downloadSampleCsv = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const link = document.createElement('a');
+    link.href = '/sample/sample.csv';
+    link.download = 'sample.csv';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }, []);
+
+  return (
+    <div className="min-h-screen bg-background text-foreground pb-20 md:pl-64">
+      <AppSidebar />
+      
+      <main className="mx-auto flex w-full max-w-5xl flex-col gap-10 px-6 py-10">
         <header className="space-y-4">
           <div>
             <h1 className="text-3xl font-bold tracking-tight text-foreground">
@@ -635,10 +733,51 @@ export default function AiCustomPage() {
           </div>
           {senderMissingFields.length > 0 && (
             <div className="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">
-              必須項目が不足しています: {senderMissingFields.join(', ')}
+              必須項目が不足しています: {' '}
+              {senderMissingFields.map((field) => SENDER_FIELD_LABELS[field]).join('、')}
             </div>
           )}
         </section>
+
+        {autoRunStatus !== 'idle' && (
+          <div
+            className={`card-clean border ${
+              autoRunStatus === 'error'
+                ? 'border-rose-500/40 bg-rose-500/5'
+                : autoRunStatus === 'running'
+                ? 'border-primary/40 bg-primary/5'
+                : 'border-emerald-400/40 bg-emerald-500/5'
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <span
+                className={`inline-flex h-10 w-10 items-center justify-center rounded-full ${
+                  autoRunStatus === 'error'
+                    ? 'bg-rose-500/20 text-rose-300'
+                    : autoRunStatus === 'running'
+                    ? 'bg-primary/20 text-primary'
+                    : 'bg-emerald-500/20 text-emerald-300'
+                }`}
+              >
+                {autoRunStatus === 'running' && (
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                )}
+                {autoRunStatus === 'error' && '⚠️'}
+                {autoRunStatus === 'done' && '✅'}
+              </span>
+              <div>
+                <p className="text-sm font-semibold text-foreground">
+                  {autoRunStatus === 'running'
+                    ? '自動送信フローを実行中'
+                    : autoRunStatus === 'error'
+                    ? '自動送信フローでエラー'
+                    : '自動送信が完了しました'}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">{autoRunMessage}</p>
+              </div>
+            </div>
+          </div>
+        )}
 
         <section className="card-clean p-8">
           <SectionHeader
@@ -695,25 +834,78 @@ export default function AiCustomPage() {
             <p>1列目: 担当者名 / 2列目: 部署 / 3列目: 役職 / 4列目: メール / 5列目: ホームページURL（必須）</p>
           </div>
 
-          <label className="group relative flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-border bg-muted/10 px-4 py-10 text-center transition-colors hover:border-primary/50 hover:bg-primary/5">
+        <div className="mb-6 rounded-xl border border-border bg-muted/20 p-4">
+          <label className="flex items-center gap-3 text-sm font-medium text-foreground">
             <input
-              type="file"
-              accept=".xlsx,.xls,.csv"
-              onChange={handleFileInputChange}
-              className="sr-only"
+              type="checkbox"
+              className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+              checked={autoSendEnabled}
+              onChange={(event) => setAutoSendEnabled(event.target.checked)}
             />
-            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted text-muted-foreground group-hover:bg-primary/10 group-hover:text-primary mb-3">
-              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-              </svg>
-            </div>
-            <span className="text-sm font-medium text-foreground">
-              ファイルを選択またはドロップ
-            </span>
-            <span className="mt-1 text-xs text-muted-foreground">
-              .xlsx, .xls, .csv (Max 100 rows)
-            </span>
+            AI生成後に自動でフォーム送信まで行う
           </label>
+          <p className="text-xs text-muted-foreground mt-2">
+            チェック時はAI文章生成からフォーム送信までをブラウザ上で連続実行します。処理中にページを閉じると中断されます。
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <p className="text-xs text-muted-foreground">
+            CSV / Excelテンプレートは右のボタンからダウンロードできます。
+          </p>
+          <button
+            type="button"
+            onClick={downloadSampleCsv}
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:text-primary/80 hover:underline"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+              />
+            </svg>
+            サンプルデータをダウンロード
+          </button>
+        </div>
+
+        <label
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          className={`dropzone group relative flex cursor-pointer flex-col items-center justify-center rounded-xl px-4 py-10 text-center ${
+            isDragging ? 'is-active' : ''
+          }`}
+        >
+          <input
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            onChange={handleFileInputChange}
+            className="sr-only"
+          />
+          <div
+            className={`flex h-12 w-12 items-center justify-center rounded-full mb-3 transition-colors ${
+              isDragging
+                ? 'bg-primary/20 text-primary'
+                : 'bg-muted text-muted-foreground group-hover:bg-primary/10 group-hover:text-primary'
+            }`}
+          >
+            <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+              />
+            </svg>
+          </div>
+          <span className="text-sm font-medium text-foreground">ファイルを選択またはドロップ</span>
+          <span className="mt-1 text-xs text-muted-foreground">
+            対応形式: .xlsx / .xls / .csv（最大100行まで）
+          </span>
+
+        </label>
 
           {uploadState.fileName && (
             <div className="mt-4 flex items-center justify-between rounded-lg border border-border bg-muted/30 px-4 py-3">

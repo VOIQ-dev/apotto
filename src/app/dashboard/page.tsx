@@ -1,8 +1,31 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  ComposedChart,
+  Legend,
+  Line,
+  Pie,
+  PieChart,
+  PolarAngleAxis,
+  PolarGrid,
+  PolarRadiusAxis,
+  Radar,
+  RadarChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 
 import { createSupabaseBrowserClient } from '@/lib/supabase';
+import { AppSidebar } from '@/components/AppSidebar';
 
 type RangeFilter = '7d' | '30d' | '90d';
 
@@ -18,12 +41,36 @@ type DashboardData = {
   companyEngagement: Array<{ company: string; rate: number }>;
   timeline: Array<{ slot: string; views: number }>;
   logs: Array<{ viewer: string; company: string; pdf: string; viewedAt: string }>;
+  contentInsights: Array<{ name: string; avgTime: number; completionRate: number }>;
+  weekdayPeaks: Array<{ day: string; morning: number; afternoon: number; evening: number }>;
+  industryEngagement: Array<{ industry: string; responseRate: number; avgScore: number }>;
+  funnel: Array<{ stage: string; value: number; delta: number }>;
 };
 
 type MetricsState = {
   loading: boolean;
   data: DashboardData;
   error?: string;
+};
+
+const COLORS = ['#10b981', '#0ea5e9', '#8b5cf6', '#f59e0b', '#ef4444'];
+
+// Custom Tooltip for Recharts
+const CustomTooltip = ({ active, payload, label }: any) => {
+  if (active && payload && payload.length) {
+    return (
+      <div className="rounded-lg border border-border bg-background/90 p-3 shadow-xl backdrop-blur-md">
+        <p className="mb-1 text-xs font-semibold text-foreground">{label}</p>
+        {payload.map((entry: any, index: number) => (
+          <p key={index} className="text-xs text-muted-foreground">
+            <span style={{ color: entry.color }} className="mr-1">●</span>
+            {entry.name}: <span className="font-medium text-foreground">{entry.value}</span>
+          </p>
+        ))}
+      </div>
+    );
+  }
+  return null;
 };
 
 export default function DashboardPage() {
@@ -44,21 +91,8 @@ export default function DashboardPage() {
   );
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      {/* Navigation / Header Area */}
-      <div className="sticky top-0 z-10 border-b border-border/60 bg-background/80 backdrop-blur-md">
-        <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between px-6">
-          <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary font-bold">
-              A
-            </div>
-            <span className="text-lg font-bold tracking-tight">apotto</span>
-          </div>
-          <div className="text-sm font-medium text-muted-foreground">
-            Dashboard
-          </div>
-        </div>
-      </div>
+    <div className="min-h-screen bg-background text-foreground md:pl-64">
+      <AppSidebar />
 
       <main className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-6 py-10">
         <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
@@ -145,120 +179,225 @@ export default function DashboardPage() {
 
         {/* Charts Section */}
         <section className="grid gap-6 lg:grid-cols-2">
-          <div className="card-clean">
+          {/* PDF Performance - Bar Chart */}
+          <div className="card-clean flex flex-col">
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-lg font-bold text-foreground">資料別の閲覧傾向</h2>
               <span className="text-xs font-medium text-muted-foreground bg-muted px-2 py-1 rounded-md">Top 5</span>
             </div>
-            <div className="space-y-5">
-              {metrics.data.pdfPerformance.map((pdf) => {
-                const topViews = metrics.data.pdfPerformance[0]?.views || 1;
-                const percentage = Math.min(100, (pdf.views / topViews) * 100);
-                return (
-                <div key={pdf.id}>
-                  <div className="flex items-center justify-between text-sm mb-2">
-                    <span className="font-medium text-foreground truncate pr-4">{pdf.name}</span>
-                    <div className="flex items-center gap-4 text-muted-foreground tabular-nums">
-                      <span>{pdf.views} views</span>
-                    </div>
-                  </div>
-                  <div className="relative h-2.5 w-full overflow-hidden rounded-full bg-muted">
-                    <div
-                      className="absolute left-0 top-0 h-full rounded-full bg-primary transition-all duration-500 ease-out"
-                        style={{ width: `${percentage}%` }}
-                      />
-                  </div>
-                  <div className="mt-1 text-right text-xs text-muted-foreground">
-                    Unique: {pdf.uniqueViews}
-                  </div>
-                </div>
-                );
-              })}
+            <div className="flex-1 min-h-[300px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={metrics.data.pdfPerformance}
+                  layout="vertical"
+                  margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" horizontal={false} />
+                  <XAxis type="number" stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} />
+                  <YAxis
+                    dataKey="name"
+                    type="category"
+                    stroke="#94a3b8"
+                    fontSize={12}
+                    tickLine={false}
+                    axisLine={false}
+                    width={100}
+                    tickFormatter={(value) => value.length > 10 ? `${value.substring(0, 10)}...` : value}
+                  />
+                  <Tooltip cursor={{ fill: '#1e293b', opacity: 0.4 }} content={<CustomTooltip />} />
+                  <Legend />
+                  <Bar dataKey="views" name="総閲覧数" fill="#10b981" radius={[0, 4, 4, 0]} barSize={20} />
+                  <Bar dataKey="uniqueViews" name="ユニーク数" fill="#0ea5e9" radius={[0, 4, 4, 0]} barSize={20} />
+                </BarChart>
+              </ResponsiveContainer>
             </div>
           </div>
 
-          <div className="card-clean">
+          {/* Timeline - Area Chart */}
+          <div className="card-clean flex flex-col">
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-lg font-bold text-foreground">時間帯ごとの反応</h2>
               <span className="text-xs font-medium text-muted-foreground bg-muted px-2 py-1 rounded-md">Peak Time</span>
             </div>
-            <div className="flex h-64 items-end justify-between gap-2 px-2">
-              {metrics.data.timeline.map((slot) => {
-                  const maxVal = Math.max(...metrics.data.timeline.map(t => t.views));
-                  const heightPct = maxVal > 0 ? (slot.views / maxVal) * 100 : 0;
-                  
-                  return (
-                    <div key={slot.slot} className="group flex flex-1 flex-col items-center gap-2">
-                      <div className="relative w-full flex-1 flex items-end rounded-t-lg bg-muted/30 hover:bg-muted/50 transition-colors">
-                    <div
-                           className="w-full rounded-t-md bg-primary/80 transition-all duration-500 ease-out group-hover:bg-primary"
-                           style={{ height: `${Math.max(4, heightPct)}%` }}
-                         />
-                         {/* Tooltip-ish */}
-                         <div className="absolute -top-8 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-popover text-popover-foreground text-xs px-2 py-1 rounded shadow-lg pointer-events-none whitespace-nowrap">
-                           {slot.views} views
-                         </div>
-                  </div>
-                      <span className="text-xs font-medium text-muted-foreground text-center truncate w-full">
-                        {slot.slot}
-                      </span>
-                </div>
-                  );
-              })}
+            <div className="flex-1 min-h-[300px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart
+                  data={metrics.data.timeline}
+                  margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
+                >
+                  <defs>
+                    <linearGradient id="colorViews" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.8}/>
+                      <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
+                  <XAxis dataKey="slot" stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} />
+                  <YAxis stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Area type="monotone" dataKey="views" name="閲覧数" stroke="#8b5cf6" fillOpacity={1} fill="url(#colorViews)" />
+                </AreaChart>
+              </ResponsiveContainer>
             </div>
           </div>
         </section>
 
+        {/* Content Engagement & Weekday Peaks */}
         <section className="grid gap-6 lg:grid-cols-2">
-          <div className="card-clean">
-            <h2 className="text-lg font-bold text-foreground mb-4">企業別の反応率</h2>
-            <div className="space-y-1">
-              {metrics.data.companyEngagement.map((entry, i) => (
-                <div key={entry.company} className="flex items-center justify-between py-3 border-b border-border/50 last:border-0">
-                  <div className="flex items-center gap-3">
-                    <div className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold ${
-                      i === 0 ? 'bg-amber-100 text-amber-700' : 'bg-muted text-muted-foreground'
-                    }`}>
-                      {i + 1}
-                    </div>
-                    <span className="text-sm font-medium text-foreground">{entry.company}</span>
+          <div className="card-clean flex flex-col">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-lg font-bold text-foreground">コンテンツ滞在時間 × 完読率</h2>
+              <span className="text-xs font-medium text-muted-foreground bg-muted px-2 py-1 rounded-md">Engagement</span>
+            </div>
+            <div className="flex-1 min-h-[320px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={metrics.data.contentInsights} margin={{ top: 10, right: 20, bottom: 0, left: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                  <XAxis dataKey="name" stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} />
+                  <YAxis
+                    yAxisId="left"
+                    stroke="#94a3b8"
+                    fontSize={12}
+                    tickLine={false}
+                    axisLine={false}
+                    domain={[0, 100]}
+                    tickFormatter={(value) => `${value}%`}
+                  />
+                  <YAxis
+                    yAxisId="right"
+                    orientation="right"
+                    stroke="#94a3b8"
+                    fontSize={12}
+                    tickLine={false}
+                    axisLine={false}
+                    tickFormatter={(value) => `${value}s`}
+                  />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Legend />
+                  <Bar yAxisId="left" dataKey="completionRate" name="完読率(%)" fill="#10b981" radius={[4, 4, 0, 0]} />
+                  <Line yAxisId="right" type="monotone" dataKey="avgTime" name="平均滞在(秒)" stroke="#0ea5e9" strokeWidth={3} dot={{ r: 4 }} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="card-clean flex flex-col">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-lg font-bold text-foreground">曜日別 × 時間帯ピーク</h2>
+              <span className="text-xs font-medium text-muted-foreground bg-muted px-2 py-1 rounded-md">Heatmap</span>
+            </div>
+            <div className="flex-1 min-h-[320px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={metrics.data.weekdayPeaks} margin={{ top: 10, right: 20, left: -10, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
+                  <XAxis dataKey="day" stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} />
+                  <YAxis stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Legend />
+                  <Bar dataKey="morning" stackId="time" name="午前" fill="#38bdf8" radius={[6, 6, 0, 0]} />
+                  <Bar dataKey="afternoon" stackId="time" name="午後" fill="#8b5cf6" />
+                  <Bar dataKey="evening" stackId="time" name="夕方" fill="#f59e0b" radius={[0, 0, 6, 6]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </section>
+
+        {/* Industry Engagement & Funnel */}
+        <section className="grid gap-6 lg:grid-cols-2">
+          {/* Company Engagement - Radar Chart */}
+          <div className="card-clean flex flex-col">
+            <h2 className="text-lg font-bold text-foreground mb-4">業界別エンゲージメント</h2>
+            <div className="flex-1 min-h-[320px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <RadarChart cx="50%" cy="50%" outerRadius="80%" data={metrics.data.industryEngagement}>
+                  <PolarGrid stroke="#334155" />
+                  <PolarAngleAxis dataKey="industry" stroke="#94a3b8" />
+                  <PolarRadiusAxis angle={30} domain={[0, 80]} stroke="#475569" tickFormatter={(value) => `${value}%`} />
+                  <Radar
+                    name="反応率"
+                    dataKey="responseRate"
+                    stroke="#10b981"
+                    fill="#10b981"
+                    fillOpacity={0.4}
+                  />
+                  <Radar
+                    name="AIマッチ度"
+                    dataKey="avgScore"
+                    stroke="#0ea5e9"
+                    fill="#0ea5e9"
+                    fillOpacity={0.2}
+                  />
+                  <Legend />
+                  <Tooltip content={<CustomTooltip />} />
+                </RadarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="card-clean flex flex-col">
+            <h2 className="text-lg font-bold text-foreground mb-2">カスタマーファネル</h2>
+            <p className="text-sm text-muted-foreground">送信から成約までのコンバージョン推移を可視化</p>
+            <div className="mt-6 space-y-6">
+              {metrics.data.funnel.map((stage, index) => (
+                <div key={stage.stage} className="space-y-2">
+                  <div className="flex items-center justify-between text-xs text-muted-foreground uppercase tracking-wider">
+                    <span>{stage.stage}</span>
+                    <span className="font-semibold text-foreground">{stage.value.toLocaleString()}件</span>
                   </div>
-                  <div className="text-right">
-                     <span className="text-sm font-bold text-foreground tabular-nums">{entry.rate.toFixed(1)}%</span>
+                  <div className="h-3 rounded-full bg-muted overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-all duration-500"
+                      style={{
+                        width: `${stage.value}%`,
+                        background:
+                          index === 0
+                            ? 'linear-gradient(90deg, #34d399 0%, #10b981 100%)'
+                            : index === 1
+                            ? 'linear-gradient(90deg, #2dd4bf 0%, #0ea5e9 100%)'
+                            : index === 2
+                            ? 'linear-gradient(90deg, #c084fc 0%, #8b5cf6 100%)'
+                            : 'linear-gradient(90deg, #f97316 0%, #f43f5e 100%)',
+                      }}
+                    />
+                  </div>
+                  <div className={`text-xs font-medium ${stage.delta >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {stage.delta >= 0 ? `▲ ${stage.delta}% vs last period` : `▼ ${Math.abs(stage.delta)}% vs last period`}
                   </div>
                 </div>
               ))}
             </div>
           </div>
+        </section>
 
-          <div className="card-clean flex flex-col">
-            <h2 className="text-lg font-bold text-foreground mb-4">最新の閲覧ログ</h2>
-            <div className="flex-1 overflow-hidden rounded-xl border border-border">
-              <div className="h-full overflow-y-auto">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-muted/50 text-xs uppercase text-muted-foreground sticky top-0 backdrop-blur-sm">
-                    <tr>
-                      <th className="px-4 py-3 font-medium">閲覧者</th>
-                      <th className="px-4 py-3 font-medium">資料</th>
-                      <th className="px-4 py-3 font-medium text-right">日時</th>
+        {/* Latest Logs */}
+        <section className="card-clean flex flex-col">
+          <h2 className="text-lg font-bold text-foreground mb-4">最新の閲覧ログ</h2>
+          <div className="flex-1 overflow-hidden rounded-xl border border-border">
+            <div className="h-full overflow-y-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-muted/50 text-xs uppercase text-muted-foreground sticky top-0 backdrop-blur-sm">
+                  <tr>
+                    <th className="px-4 py-3 font-medium">閲覧者</th>
+                    <th className="px-4 py-3 font-medium">資料</th>
+                    <th className="px-4 py-3 font-medium text-right">日時</th>
+                </tr>
+              </thead>
+                <tbody className="divide-y divide-border/50">
+                  {metrics.data.logs.map((log, idx) => (
+                    <tr key={`${log.viewer}-${log.viewedAt}-${idx}`} className="hover:bg-muted/30 transition-colors">
+                      <td className="px-4 py-3">
+                        <div className="font-medium text-foreground">{log.company}</div>
+                        <div className="text-xs text-muted-foreground">{log.viewer}</div>
+                      </td>
+                      <td className="px-4 py-3 text-foreground truncate max-w-[120px]">{log.pdf}</td>
+                      <td className="px-4 py-3 text-right text-xs text-muted-foreground whitespace-nowrap">
+                        {log.viewedAt}
+                      </td>
                   </tr>
-                </thead>
-                  <tbody className="divide-y divide-border/50">
-                    {metrics.data.logs.map((log, idx) => (
-                      <tr key={`${log.viewer}-${log.viewedAt}-${idx}`} className="hover:bg-muted/30 transition-colors">
-                        <td className="px-4 py-3">
-                          <div className="font-medium text-foreground">{log.company}</div>
-                          <div className="text-xs text-muted-foreground">{log.viewer}</div>
-                        </td>
-                        <td className="px-4 py-3 text-foreground truncate max-w-[120px]">{log.pdf}</td>
-                        <td className="px-4 py-3 text-right text-xs text-muted-foreground whitespace-nowrap">
-                          {log.viewedAt}
-                        </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              </div>
+                ))}
+              </tbody>
+            </table>
             </div>
           </div>
         </section>
@@ -369,6 +508,18 @@ function normalizeDashboardData(raw: unknown, filters: DashboardFilters): Dashbo
     logs: Array.isArray(snapshot.logs)
       ? (snapshot.logs as DashboardData['logs'])
       : buildMockData(filters).logs,
+    contentInsights: Array.isArray(snapshot.contentInsights)
+      ? (snapshot.contentInsights as DashboardData['contentInsights'])
+      : buildMockData(filters).contentInsights,
+    weekdayPeaks: Array.isArray(snapshot.weekdayPeaks)
+      ? (snapshot.weekdayPeaks as DashboardData['weekdayPeaks'])
+      : buildMockData(filters).weekdayPeaks,
+    industryEngagement: Array.isArray(snapshot.industryEngagement)
+      ? (snapshot.industryEngagement as DashboardData['industryEngagement'])
+      : buildMockData(filters).industryEngagement,
+    funnel: Array.isArray(snapshot.funnel)
+      ? (snapshot.funnel as DashboardData['funnel'])
+      : buildMockData(filters).funnel,
   };
 }
 
@@ -407,11 +558,12 @@ function buildMockData(filters: DashboardFilters): DashboardData {
     { company: 'B社 (製造)', rate: 54.1 },
     { company: 'C社 (通信)', rate: 38.2 },
     { company: 'D社 (金融)', rate: 27.5 },
+    { company: 'E社 (小売)', rate: 18.9 }, // Added for Pie Chart
   ];
 
-  const timeline = ['8-10時', '10-12時', '12-14時', '14-16時'].map((slot, index) => ({
+  const timeline = ['8-10時', '10-12時', '12-14時', '14-16時', '16-18時', '18-20時'].map((slot, index) => ({
     slot,
-    views: Math.round((index + 1.2) * 20 * multiplier),
+    views: Math.round((index + 1.2) * 20 * multiplier * (Math.random() * 0.5 + 0.8)),
   }));
 
   const logs = [
@@ -443,6 +595,35 @@ function buildMockData(filters: DashboardFilters): DashboardData {
 
   const referenceRate = companyEngagement[0]?.rate ?? 0;
 
+  const contentInsights = basePdf.map((pdf, index) => ({
+    name: pdf.name.replace('.pdf', ''),
+    avgTime: Math.round((45 + index * 15) * (filters.range === '90d' ? 1.1 : 1)),
+    completionRate: Math.min(95, Math.round(58 + index * 7)),
+  }));
+
+  const weekdayPeaks = [
+    { day: 'Mon', morning: 28, afternoon: 36, evening: 18 },
+    { day: 'Tue', morning: 32, afternoon: 42, evening: 22 },
+    { day: 'Wed', morning: 26, afternoon: 48, evening: 30 },
+    { day: 'Thu', morning: 24, afternoon: 34, evening: 28 },
+    { day: 'Fri', morning: 20, afternoon: 30, evening: 36 },
+  ];
+
+  const industryEngagement = [
+    { industry: 'SaaS', responseRate: 72, avgScore: 65 },
+    { industry: '製造', responseRate: 58, avgScore: 61 },
+    { industry: '通信', responseRate: 44, avgScore: 52 },
+    { industry: '金融', responseRate: 37, avgScore: 48 },
+    { industry: '小売', responseRate: 33, avgScore: 45 },
+  ];
+
+  const funnel = [
+    { stage: '送信完了', value: 100, delta: 3 },
+    { stage: '閲覧済み', value: 68, delta: 5 },
+    { stage: 'フォーム入力', value: 41, delta: -2 },
+    { stage: '成約', value: 18, delta: 1 },
+  ];
+
   const summary = [
     {
       label: '総閲覧数',
@@ -473,5 +654,9 @@ function buildMockData(filters: DashboardFilters): DashboardData {
     companyEngagement,
     timeline,
     logs,
+    contentInsights,
+    weekdayPeaks,
+    industryEngagement,
+    funnel,
   };
 }

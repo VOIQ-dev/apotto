@@ -34,32 +34,39 @@ function FeatureCard({
   return (
     <div
       ref={ref}
-      className={`reveal-on-scroll rounded-2xl border border-border/60 bg-white p-8 shadow-sm transition-all hover:shadow-lg hover:border-primary/20 ${isVisible ? 'is-visible' : ''
+      className={`reveal-on-scroll rounded-2xl border border-slate-200 bg-white p-8 shadow-sm transition-all hover:shadow-lg hover:border-emerald-200 ${isVisible ? 'is-visible' : ''
         }`}
       style={{ transitionDelay: `${delay}ms` }}
     >
       <div className="mb-6 inline-flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary">
         {icon}
       </div>
-      <h3 className="text-xl font-bold text-foreground">{title}</h3>
-      <p className="mt-4 text-muted-foreground leading-relaxed">{description}</p>
+      <h3 className="text-xl font-bold text-slate-900">{title}</h3>
+      <p className="mt-4 text-slate-600 leading-relaxed">{description}</p>
     </div>
   );
 }
 
 export function Features() {
   return (
-    <section id="features" className="py-24 bg-slate-50/50 relative">
+    <section
+      id="features"
+      className="py-24 relative bg-gradient-to-b from-emerald-50 via-emerald-50/60 to-white"
+    >
       {/* Decoration */}
-      <div className="absolute top-0 left-0 w-full h-px bg-gradient-to-r from-transparent via-border to-transparent"></div>
+      <div className="absolute top-0 left-0 w-full h-px bg-gradient-to-r from-transparent via-emerald-200 to-transparent"></div>
+      <div className="absolute inset-0 pointer-events-none opacity-40">
+        <div className="absolute -top-20 -left-32 h-72 w-72 rounded-full bg-emerald-200 blur-3xl" />
+        <div className="absolute bottom-0 right-0 h-64 w-64 rounded-full bg-teal-100 blur-3xl" />
+      </div>
 
-      <div className="mx-auto max-w-7xl px-6">
+      <div className="mx-auto max-w-7xl px-6 relative z-10">
         <div className="text-center max-w-3xl mx-auto mb-16">
-          <h2 className="text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
+          <h2 className="text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">
             最強の営業チームを、<br />
             AIひとつで。
           </h2>
-          <p className="mt-4 text-lg text-muted-foreground">
+          <p className="mt-4 text-lg text-slate-600">
             apottoは単なる自動送信ツールではありません。<br />
             相手の心を動かす「文面」と、興味を見逃さない「分析」を兼ね備えています。
           </p>

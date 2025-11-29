@@ -2,6 +2,87 @@
 
 import { useEffect, useRef, useState } from 'react';
 
+// カレンダー表示コンポーネント（静的）
+function CalendarDisplay() {
+  // アポイントスロットのデータ（固定表示）
+  const appointments = [
+    { day: '月', time: '10:00', company: 'A社' },
+    { day: '火', time: '14:00', company: 'B社' },
+    { day: '水', time: '11:00', company: 'C社' },
+    { day: '木', time: '15:00', company: 'D社' },
+    { day: '金', time: '13:00', company: 'E社' },
+  ];
+
+  const days = ['月', '火', '水', '木', '金'];
+  const times = ['10:00', '11:00', '13:00', '14:00', '15:00'];
+
+  return (
+    <div className="p-6 bg-slate-50">
+      {/* カレンダーヘッダー */}
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <svg className="w-5 h-5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+          </svg>
+          <span className="text-sm font-semibold text-slate-700">今週のスケジュール</span>
+        </div>
+      </div>
+
+      {/* カレンダーグリッド */}
+      <div className="bg-white rounded-lg border border-slate-200 overflow-hidden">
+        {/* 曜日ヘッダー */}
+        <div className="grid grid-cols-5 border-b border-slate-100">
+          {days.map((day) => (
+            <div key={day} className="py-2 text-center text-xs font-medium text-slate-500 bg-slate-50">
+              {day}
+            </div>
+          ))}
+        </div>
+
+        {/* タイムスロット */}
+        <div className="grid grid-cols-5">
+          {days.map((day) => (
+            <div key={day} className="border-r border-slate-100 last:border-r-0">
+              {times.map((time) => {
+                const appointment = appointments.find(
+                  (a) => a.day === day && a.time === time
+                );
+
+                return (
+                  <div
+                    key={`${day}-${time}`}
+                    className={`h-12 border-b border-slate-50 last:border-b-0 flex items-center justify-center ${
+                      appointment ? 'bg-emerald-50' : ''
+                    }`}
+                  >
+                    {appointment ? (
+                      <div className="flex flex-col items-center">
+                        <span className="text-[10px] font-semibold text-emerald-600">{appointment.company}</span>
+                        <span className="text-[9px] text-emerald-500">{time}</span>
+                      </div>
+                    ) : (
+                      <div className="w-1 h-1 rounded-full bg-slate-200"></div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* 統計 */}
+      <div className="mt-4 flex items-center justify-between text-xs">
+        <div className="flex items-center gap-1.5">
+          <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
+          <span className="text-slate-500">今週のアポイント</span>
+        </div>
+        <span className="font-semibold text-emerald-600">{appointments.length}件</span>
+      </div>
+    </div>
+  );
+}
+
 function StepItem({
   number,
   title,
@@ -41,7 +122,7 @@ function StepItem({
       }`}
     >
       <div className="flex flex-col items-center">
-        <div className="relative flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full border-2 border-primary bg-background text-lg font-bold text-primary shadow-lg shadow-primary/20 z-10 group">
+        <div className="relative flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full border-2 border-emerald-200 bg-white text-lg font-bold text-emerald-500 shadow-lg shadow-emerald-200/60 z-10 group">
           {number}
           {/* Pulse effect behind number */}
           <div className="absolute inset-0 rounded-full bg-primary/20 animate-ping opacity-75 group-hover:opacity-100"></div>
@@ -53,10 +134,10 @@ function StepItem({
         )}
       </div>
       <div className="pb-16 pt-1 flex-1">
-        <h3 className="text-xl font-bold text-foreground">{title}</h3>
-        <p className="mt-3 text-muted-foreground">{description}</p>
+        <h3 className="text-xl font-bold text-slate-900">{title}</h3>
+        <p className="mt-3 text-slate-600">{description}</p>
         {image && (
-          <div className="mt-6 overflow-hidden rounded-xl border border-border bg-slate-50 shadow-sm group hover:shadow-md transition-shadow duration-300">
+          <div className="mt-6 overflow-hidden rounded-xl border border-slate-200 bg-slate-50 shadow-sm group hover:shadow-md transition-shadow duration-300">
             {image}
           </div>
         )}
@@ -71,7 +152,7 @@ export function Steps() {
       <div className="mx-auto max-w-5xl px-6">
         <div className="mb-16 text-center">
            <span className="text-sm font-semibold uppercase tracking-wider text-primary">How it works</span>
-           <h2 className="mt-2 text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
+           <h2 className="mt-2 text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">
             たった3ステップで、<br/>アプローチを開始
           </h2>
         </div>
@@ -101,7 +182,7 @@ export function Steps() {
           />
           <StepItem
             number="02"
-            title="AIが文面を自動生成"
+            title="AIが文面を自動生成・自動送付"
             description="アップロードされたURLから企業の事業内容を解析。自社プロダクトとの相性を考え、刺さる提案文を1社ずつ生成します。"
             image={
                <div className="relative p-6 bg-slate-900/5">
@@ -120,23 +201,10 @@ export function Steps() {
           />
           <StepItem
             number="03"
-            title="クリック送信 & 分析"
-            description="生成された文面を確認し、ワンクリックで送信（またはメールソフトへコピー）。送信後は相手の開封やクリックをリアルタイムで追跡します。"
+            title="アポイントを待つだけ"
+            description="あとは自動でアプローチが実行され、アポイントの連絡を待つだけ。カレンダーにスケジュールが埋まっていきます。"
             isLast
-            image={
-               <div className="grid grid-cols-2 gap-4 p-6 bg-slate-50">
-                  <div className="bg-white p-4 rounded-lg shadow-sm border border-slate-100 text-center group-hover:shadow-md transition-shadow">
-                     <div className="text-xs text-slate-500 uppercase">Open Rate</div>
-                     <div className="text-2xl font-bold text-slate-900 mt-1">42.8%</div>
-                     <div className="text-xs text-green-500 mt-1">↑ 12% up</div>
-                  </div>
-                  <div className="bg-white p-4 rounded-lg shadow-sm border border-slate-100 text-center group-hover:shadow-md transition-shadow">
-                     <div className="text-xs text-slate-500 uppercase">Meetings</div>
-                     <div className="text-2xl font-bold text-slate-900 mt-1">8</div>
-                     <div className="text-xs text-slate-400 mt-1">This week</div>
-                  </div>
-               </div>
-            }
+            image={<CalendarDisplay />}
           />
         </div>
       </div>

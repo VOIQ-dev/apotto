@@ -18,26 +18,27 @@ export function Header() {
     <header
       className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
         isScrolled
-          ? 'bg-background/80 backdrop-blur-md shadow-sm border-b border-border/50 py-3'
+          ? 'bg-white/90 backdrop-blur-md shadow-sm border-b border-slate-200 py-3'
           : 'bg-transparent py-5'
       }`}
     >
       <div className="mx-auto flex max-w-7xl items-center justify-between px-6">
-        <div className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-white font-bold shadow-lg shadow-primary/30">
-            A
-          </div>
-          <span className="text-xl font-bold tracking-tight text-foreground">apotto</span>
-        </div>
+        <Link href="/" className="flex items-center">
+          <img
+            src="/apotto/apotto_icon.png"
+            alt="Apotto"
+            className="h-20 w-40"
+          />
+        </Link>
 
         <nav className="hidden md:flex items-center gap-8">
-          <a href="#features" className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors">
+          <a href="#features" className="text-sm font-medium text-slate-500 hover:text-emerald-600 transition-colors">
             機能
           </a>
-          <a href="#how-it-works" className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors">
+          <a href="#how-it-works" className="text-sm font-medium text-slate-500 hover:text-emerald-600 transition-colors">
             使い方
           </a>
-          <a href="#contact" className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors">
+          <a href="#contact" className="text-sm font-medium text-slate-500 hover:text-emerald-600 transition-colors">
             お問い合わせ
           </a>
         </nav>
@@ -45,7 +46,7 @@ export function Header() {
         <div className="flex items-center gap-4">
           <Link
             href="/login"
-            className="hidden sm:inline-flex h-9 items-center justify-center rounded-lg border border-border bg-white px-4 text-sm font-medium text-foreground shadow-sm transition-colors hover:bg-muted focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:pointer-events-none disabled:opacity-50"
+            className="hidden sm:inline-flex h-9 items-center justify-center rounded-lg border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 shadow-sm transition-colors hover:bg-emerald-50 focus:outline-none focus:ring-2 focus:ring-emerald-200 disabled:pointer-events-none disabled:opacity-50"
           >
             ログイン
           </Link>

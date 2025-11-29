@@ -128,7 +128,7 @@ function Scene() {
 
 export function Background3D() {
   return (
-    <div className="absolute inset-0 -z-10 overflow-hidden pointer-events-none bg-[#f8fafc] dark:bg-[#0f172a]">
+    <div className="absolute inset-0 -z-10 overflow-hidden pointer-events-none bg-[#f8fafc]">
       <Canvas
         shadows
         dpr={[1, 2]}
@@ -139,7 +139,7 @@ export function Background3D() {
       </Canvas>
       
       {/* Overlay for better text readability */}
-      <div className="absolute inset-0 bg-gradient-to-b from-white/40 via-transparent to-white/80 dark:from-slate-900/40 dark:to-slate-900/80 pointer-events-none" />
+      <div className="absolute inset-0 bg-gradient-to-b from-white/60 via-white/10 to-white pointer-events-none" />
     </div>
   );
 }

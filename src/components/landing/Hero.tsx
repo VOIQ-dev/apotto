@@ -125,19 +125,23 @@ export function Hero() {
             <Background3D />
 
             <div className="mx-auto max-w-7xl px-6 text-center relative z-10">
-                <div className="inline-flex items-center rounded-full border border-emerald-500/30 bg-white/80 px-3 py-1 text-sm font-medium text-emerald-500 shadow-sm backdrop-blur animate-fade-in-up">
-                    <span className="flex h-2 w-2 rounded-full bg-emerald-500 mr-2 animate-pulse shadow-[0_0_10px_rgba(52,211,153,0.5)]"></span>
-                    AI営業自動化プラットフォーム
-                </div>
 
-                <h1 className="mt-6 text-4xl font-bold tracking-tight text-slate-900 sm:text-6xl lg:text-7xl animate-fade-in-up delay-100">
-                    <span className="block text-transparent bg-clip-text bg-gradient-to-r from-slate-900 to-slate-700">
-                        1社1社に、
-                    </span>
-                    <span className="block mt-2 text-transparent bg-clip-text bg-gradient-to-r from-emerald-600 to-teal-500 drop-shadow-[0_0_30px_rgba(52,211,153,0.3)]">
-                        心を込めたアプローチを。
-                    </span>
-                </h1>
+                {/* ロゴを文言の右上に配置 */}
+                <div className="relative inline-block">
+                    <img
+                        src="/apotto/apotto_logo.png"
+                        alt="Apotto Logo"
+                        className="absolute -top-8 -right-32 h-40 w-80 hidden sm:block"
+                    />
+                    <h1 className="mt-6 text-4xl font-bold tracking-tight text-slate-900 sm:text-6xl lg:text-7xl animate-fade-in-up delay-100">
+                        <span className="block text-transparent bg-clip-text bg-gradient-to-r from-slate-900 to-slate-700">
+                            1社1社に、
+                        </span>
+                        <span className="block mt-2 text-transparent bg-clip-text bg-gradient-to-r from-emerald-600 to-teal-500 drop-shadow-[0_0_30px_rgba(52,211,153,0.3)]">
+                            心を込めたアプローチを。
+                        </span>
+                    </h1>
+                </div>
 
                 <p className="mx-auto mt-6 max-w-2xl text-lg leading-8 text-slate-600 animate-fade-in-up delay-200">
                     企業情報をAIが分析し、<span className="text-slate-900 font-semibold">完全にパーソナライズされた文面</span>を自動生成。<br className="hidden sm:inline" />
