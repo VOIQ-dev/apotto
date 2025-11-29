@@ -7,12 +7,12 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  Cell,
+  // Cell,
   ComposedChart,
   Legend,
   Line,
-  Pie,
-  PieChart,
+  // Pie,
+  // PieChart,
   PolarAngleAxis,
   PolarGrid,
   PolarRadiusAxis,
@@ -53,15 +53,27 @@ type MetricsState = {
   error?: string;
 };
 
-const COLORS = ['#10b981', '#0ea5e9', '#8b5cf6', '#f59e0b', '#ef4444'];
+// const COLORS = ['#10b981', '#0ea5e9', '#8b5cf6', '#f59e0b', '#ef4444'];
+
+type TooltipPayloadEntry = {
+  color: string;
+  name: string;
+  value: number | string;
+};
+
+type CustomTooltipProps = {
+  active?: boolean;
+  payload?: TooltipPayloadEntry[];
+  label?: string;
+};
 
 // Custom Tooltip for Recharts
-const CustomTooltip = ({ active, payload, label }: any) => {
+const CustomTooltip = ({ active, payload, label }: CustomTooltipProps) => {
   if (active && payload && payload.length) {
     return (
       <div className="rounded-lg border border-border bg-background/90 p-3 shadow-xl backdrop-blur-md">
         <p className="mb-1 text-xs font-semibold text-foreground">{label}</p>
-        {payload.map((entry: any, index: number) => (
+        {payload.map((entry: TooltipPayloadEntry, index: number) => (
           <p key={index} className="text-xs text-muted-foreground">
             <span style={{ color: entry.color }} className="mr-1">●</span>
             {entry.name}: <span className="font-medium text-foreground">{entry.value}</span>
