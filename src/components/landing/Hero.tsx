@@ -135,17 +135,17 @@ export function Hero() {
                     />
                     <h1 className="mt-6 text-4xl font-bold tracking-tight text-slate-900 sm:text-6xl lg:text-7xl animate-fade-in-up delay-100">
                         <span className="block text-transparent bg-clip-text bg-gradient-to-r from-slate-900 to-slate-700">
-                            1社1社に、
+                            24時間365日
                         </span>
                         <span className="block mt-2 text-transparent bg-clip-text bg-gradient-to-r from-emerald-600 to-teal-500 drop-shadow-[0_0_30px_rgba(52,211,153,0.3)]">
-                            心を込めたアプローチを。
+                            AIが商談を探し続ける
                         </span>
                     </h1>
                 </div>
 
-                <p className="mx-auto mt-6 max-w-2xl text-lg leading-8 text-slate-600 animate-fade-in-up delay-200">
-                    企業情報をAIが分析し、<span className="text-slate-900 font-semibold">完全にパーソナライズされた文面</span>を自動生成。<br className="hidden sm:inline" />
-                    フォーム投稿まで自動化し、質の高いリード獲得を実現します。
+                <p className="mx-auto mt-4 max-w-4xl text-lg leading-7 text-slate-600 animate-fade-in-up delay-200">
+                    完全にパーソナライズされた文面をAIが自動生成・自動送信。インテント解析で商談見込みの高い企業を自動抽出する新しい営業AIエージェントです。<br className="hidden sm:inline" />
+                    <span className="text-slate-900 font-semibold">新規開拓をラクに強く。営業のムダはすべて減ります。</span>
                 </p>
 
                 <div className="mt-10 flex items-center justify-center gap-x-6 animate-fade-in-up delay-300">

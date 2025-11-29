@@ -386,11 +386,11 @@ export default function AiCustomPage() {
         prev.map((card) =>
           card.id === cardId
             ? {
-              ...card,
-              generatedMessage: message,
-              status: 'ready',
-              errorMessage: undefined,
-            }
+                ...card,
+                generatedMessage: message,
+                status: 'ready',
+                errorMessage: undefined,
+              }
             : card
         )
       );
@@ -662,12 +662,12 @@ export default function AiCustomPage() {
         <header className="space-y-4">
           <div>
             <h1 className="text-3xl font-bold tracking-tight text-foreground">
-              AIカスタム文面生成
-            </h1>
+            AIカスタム文面生成
+          </h1>
             <p className="mt-2 text-base text-muted-foreground max-w-3xl">
               送信者情報とターゲット情報を入力し、AIがコンテキストに沿った最適な文面を自動生成します。
               Excelでの一括取り込みにも対応しています。
-            </p>
+          </p>
           </div>
 
           <div className="grid gap-4 sm:grid-cols-3">
@@ -723,12 +723,12 @@ export default function AiCustomPage() {
               onChange={(value) => handleSenderProfileChange('phone', value)}
             />
             <div className="sm:col-span-2">
-              <InputField
+          <InputField
                 label="件名"
                 required
-                value={senderProfile.subject}
-                onChange={(value) => handleSenderProfileChange('subject', value)}
-              />
+            value={senderProfile.subject}
+            onChange={(value) => handleSenderProfileChange('subject', value)}
+          />
             </div>
           </div>
           {senderMissingFields.length > 0 && (
@@ -765,17 +765,17 @@ export default function AiCustomPage() {
                 {autoRunStatus === 'error' && '⚠️'}
                 {autoRunStatus === 'done' && '✅'}
               </span>
-              <div>
+            <div>
                 <p className="text-sm font-semibold text-foreground">
                   {autoRunStatus === 'running'
                     ? '自動送信フローを実行中'
                     : autoRunStatus === 'error'
                     ? '自動送信フローでエラー'
                     : '自動送信が完了しました'}
-                </p>
+              </p>
                 <p className="text-xs text-muted-foreground mt-1">{autoRunMessage}</p>
-              </div>
             </div>
+          </div>
           </div>
         )}
 
@@ -793,11 +793,11 @@ export default function AiCustomPage() {
                 className="rounded-xl border border-border bg-muted/30 p-5"
               >
                 <h3 className="text-base font-semibold text-foreground mb-1">
-                  {group.title}
-                </h3>
-                {group.description && (
+                    {group.title}
+                  </h3>
+                  {group.description && (
                   <p className="text-sm text-muted-foreground mb-4">{group.description}</p>
-                )}
+                  )}
                 <div className="grid gap-4 md:grid-cols-2">
                   {group.fields.map((field) => (
                     <TextareaField
@@ -878,12 +878,12 @@ export default function AiCustomPage() {
             isDragging ? 'is-active' : ''
           }`}
         >
-          <input
-            type="file"
-            accept=".xlsx,.xls,.csv"
-            onChange={handleFileInputChange}
-            className="sr-only"
-          />
+            <input
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              onChange={handleFileInputChange}
+              className="sr-only"
+            />
           <div
             className={`flex h-12 w-12 items-center justify-center rounded-full mb-3 transition-colors ${
               isDragging
@@ -903,9 +903,9 @@ export default function AiCustomPage() {
           <span className="text-sm font-medium text-foreground">ファイルを選択またはドロップ</span>
           <span className="mt-1 text-xs text-muted-foreground">
             対応形式: .xlsx / .xls / .csv（最大100行まで）
-          </span>
+            </span>
 
-        </label>
+          </label>
 
           {uploadState.fileName && (
             <div className="mt-4 flex items-center justify-between rounded-lg border border-border bg-muted/30 px-4 py-3">
@@ -913,11 +913,11 @@ export default function AiCustomPage() {
                 <p className="text-sm font-medium text-foreground">{uploadState.fileName}</p>
                 <p className="text-xs text-muted-foreground">
                   取り込み: {uploadState.importedCount} / スキップ: {uploadState.skippedCount}
-                </p>
-              </div>
-              {uploadState.error && (
+              </p>
+            </div>
+          {uploadState.error && (
                 <span className="text-xs text-rose-500">{uploadState.error}</span>
-              )}
+          )}
             </div>
           )}
 
@@ -967,19 +967,19 @@ export default function AiCustomPage() {
                       <div className="h-8 w-8 flex-shrink-0 rounded bg-rose-100 text-rose-500 flex items-center justify-center">
                         <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.627 0-12 5.373-12 12s5.373 12 12 12 12-5.373 12-12-5.373-12-12-12zm-1 17v-1h2v1h-2zm0-12v10h2v-10h-2z" fillOpacity="0" /><path d="M7 6h10v12h-10z" fill="none" /><path d="M11.25 2h1.5v1.5h-1.5z" fillOpacity="0" /><path d="M19.5 3h-15c-1.103 0-2 .897-2 2v14c0 1.103.897 2 2 2h15c1.103 0 2-.897 2-2v-14c0-1.103-.897-2-2-2zm-3 14h-9v-10h9v10z" opacity=".5" /><path d="M7 6h10v10h-10z" fillOpacity=".2" /></svg>
                         <span className="text-xs font-bold">PDF</span>
-                      </div>
+                  </div>
                       <p className="text-sm font-medium text-foreground truncate max-w-[140px]" title={pdf.name}>{pdf.name}</p>
                     </div>
                   </div>
                   <div className="mt-3 flex items-end justify-between">
                     <span className="text-xs text-muted-foreground">{formatBytes(pdf.size)}</span>
-                    <button
-                      type="button"
-                      onClick={() => handlePdfRemove(pdf.id)}
+                  <button
+                    type="button"
+                    onClick={() => handlePdfRemove(pdf.id)}
                       className="text-xs text-rose-500 hover:text-rose-700 hover:underline"
-                    >
-                      削除
-                    </button>
+                  >
+                    削除
+                  </button>
                   </div>
                 </div>
               ))}
@@ -993,7 +993,7 @@ export default function AiCustomPage() {
             <p className="text-sm font-medium text-muted-foreground">
               <span className="text-primary font-bold">{sendableReadyCards.length}</span> / {sendableCards.length} 社 OK
             </p>
-          </div>
+            </div>
 
           {cards.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-border bg-muted/10 p-12 text-center text-muted-foreground">
@@ -1003,7 +1003,7 @@ export default function AiCustomPage() {
             <div className="grid gap-6">
               {cards.map((card) => (
                 <CardItem
-                  key={card.id}
+                    key={card.id}
                   card={card}
                   pdfAssets={pdfAssets}
                   handleCardFieldChange={handleCardFieldChange}
@@ -1024,7 +1024,7 @@ export default function AiCustomPage() {
               <span className="text-xs font-medium bg-muted px-2 py-1 rounded text-muted-foreground">
                 {queueState.pendingIds.length} pending
               </span>
-            </div>
+                        </div>
 
             <div className="space-y-4">
               <div className="rounded-lg border border-border bg-muted/30 p-4 text-sm">
@@ -1041,8 +1041,8 @@ export default function AiCustomPage() {
                 {queueState.error && (
                   <div className="mt-2 pt-2 border-t border-border/50 text-rose-500 text-xs">
                     Error: {queueState.error}
-                  </div>
-                )}
+                      </div>
+                    )}
               </div>
 
               <div className="flex gap-3">
@@ -1093,7 +1093,7 @@ export default function AiCustomPage() {
 function SectionHeader({ number, title, description }: { number: string; title: string; description?: string }) {
   return (
     <div>
-      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2">
         <span className="flex h-6 w-6 items-center justify-center rounded bg-primary/10 text-xs font-bold text-primary">
           {number}
         </span>
@@ -1131,12 +1131,12 @@ function CardItem({
             <div className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${card.sendEnabled ? 'bg-primary border-primary text-white' : 'bg-card border-muted-foreground/40'}`}>
               {card.sendEnabled && <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
             </div>
-            <input
-              type="checkbox"
-              checked={card.sendEnabled}
-              onChange={() => handleToggleSendEnabled(card.id)}
+                        <input
+                          type="checkbox"
+                          checked={card.sendEnabled}
+                          onChange={() => handleToggleSendEnabled(card.id)}
               className="sr-only"
-              disabled={card.status === 'generating'}
+                          disabled={card.status === 'generating'}
             />
             <span className="text-sm font-semibold text-foreground">送信対象</span>
           </label>
@@ -1146,10 +1146,10 @@ function CardItem({
           <div className="flex items-center gap-2">
             <span className={`text-xs px-2 py-0.5 rounded-md border ${!card.homepageUrl ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-muted border-transparent text-muted-foreground'}`}>
               {card.homepageUrl ? 'URLあり' : 'URLなし'}
-            </span>
-            <StatusBadge status={card.status} />
+                      </span>
+                      <StatusBadge status={card.status} />
           </div>
-        </div>
+                    </div>
 
         <button
           type="button"
@@ -1165,34 +1165,34 @@ function CardItem({
         <div className="space-y-4">
           <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">企業情報</h4>
           <div className="grid gap-3">
-            <InputField
-              label="相手企業名"
-              value={card.companyName}
-              placeholder="例: 株式会社◯◯"
+                      <InputField
+                        label="相手企業名"
+                        value={card.companyName}
+                        placeholder="例: 株式会社◯◯"
               onChange={(value) => handleCardFieldChange(card.id, 'companyName', value)}
-              disabled={card.status === 'generating'}
-            />
+                        disabled={card.status === 'generating'}
+                      />
             <div className="grid grid-cols-2 gap-3">
-              <InputField
-                label="担当者名"
-                value={card.contactName}
-                placeholder="例: 山田様"
+                      <InputField
+                        label="担当者名"
+                        value={card.contactName}
+                        placeholder="例: 山田様"
                 onChange={(value) => handleCardFieldChange(card.id, 'contactName', value)}
-                disabled={card.status === 'generating'}
-              />
-              <InputField
-                label="役職"
-                value={card.title}
-                onChange={(value) => handleCardFieldChange(card.id, 'title', value)}
-                disabled={card.status === 'generating'}
-              />
+                        disabled={card.status === 'generating'}
+                      />
+                      <InputField
+                        label="役職"
+                        value={card.title}
+                        onChange={(value) => handleCardFieldChange(card.id, 'title', value)}
+                        disabled={card.status === 'generating'}
+                      />
             </div>
-            <InputField
+                      <InputField
               label="HP URL *"
-              value={card.homepageUrl}
+                        value={card.homepageUrl}
               onChange={(value) => handleCardFieldChange(card.id, 'homepageUrl', normalizeHomepageUrl(value))}
-              disabled={card.status === 'generating'}
-            />
+                        disabled={card.status === 'generating'}
+                      />
           </div>
         </div>
 
@@ -1204,7 +1204,7 @@ function CardItem({
               onChange={(event) => handleMessageChange(card.id, event.target.value)}
               rows={8}
               placeholder="AI生成結果がここに表示されます..."
-              disabled={card.status === 'generating'}
+                        disabled={card.status === 'generating'}
               className="input-clean min-h-[200px] resize-y font-mono text-sm leading-relaxed"
             />
             {card.status === 'generating' && (
@@ -1217,34 +1217,34 @@ function CardItem({
             )}
           </div>
         </div>
-      </div>
+                    </div>
 
       {/* Attachments */}
-      {pdfAssets.length > 0 && (
+                    {pdfAssets.length > 0 && (
         <div className="mt-6 pt-4 border-t border-border/50">
           <p className="text-xs font-medium text-muted-foreground mb-3">添付資料を選択</p>
           <div className="flex flex-wrap gap-3">
-            {pdfAssets.map((pdf) => (
+                          {pdfAssets.map((pdf) => (
               <label key={pdf.id} className="inline-flex items-center gap-2 cursor-pointer select-none p-1.5 rounded-lg hover:bg-muted/50 transition-colors">
-                <input
-                  type="checkbox"
-                  checked={Boolean(card.attachments[pdf.id])}
+                              <input
+                                type="checkbox"
+                                checked={Boolean(card.attachments[pdf.id])}
                   onChange={(event) => handleAttachmentToggle(card.id, pdf.id, event.target.checked)}
-                  disabled={card.status === 'generating'}
+                                disabled={card.status === 'generating'}
                   className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
-                />
+                              />
                 <span className="text-sm text-foreground">{pdf.name}</span>
-              </label>
-            ))}
-          </div>
-        </div>
-      )}
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
       {card.errorMessage && (
         <div className="mt-4 p-3 bg-rose-50 border border-rose-100 rounded-lg text-xs text-rose-600">
           {card.errorMessage}
-        </div>
-      )}
+            </div>
+          )}
     </div>
   );
 }

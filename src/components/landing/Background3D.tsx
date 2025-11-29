@@ -65,7 +65,7 @@ function Particles({ count = 200, mouse }: { count?: number; mouse: React.Mutabl
     mesh.current.instanceMatrix.needsUpdate = true;
   });
 
-  return (
+    return (
     <>
       <pointLight ref={light} distance={40} intensity={5} color="#10b981" />
       <instancedMesh ref={mesh} args={[undefined, undefined, count]}>
@@ -73,12 +73,12 @@ function Particles({ count = 200, mouse }: { count?: number; mouse: React.Mutabl
         <meshPhongMaterial color="#34d399" emissive="#064e3b" specular="#10b981" shininess={50} />
       </instancedMesh>
     </>
-  );
+    );
 }
 
 function Scene() {
   const mouse = useRef<[number, number]>([0, 0]);
-  
+
   // Track mouse position normalized (-1 to 1)
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -89,7 +89,7 @@ function Scene() {
     };
     window.addEventListener('mousemove', handleMouseMove);
     return () => window.removeEventListener('mousemove', handleMouseMove);
-  }, []);
+    }, []);
 
   return (
     <>
@@ -127,7 +127,7 @@ function Scene() {
 }
 
 export function Background3D() {
-  return (
+    return (
     <div className="absolute inset-0 -z-10 overflow-hidden pointer-events-none bg-[#f8fafc]">
       <Canvas
         shadows
@@ -141,5 +141,5 @@ export function Background3D() {
       {/* Overlay for better text readability */}
       <div className="absolute inset-0 bg-gradient-to-b from-white/60 via-white/10 to-white pointer-events-none" />
     </div>
-  );
+    );
 }
