@@ -11,7 +11,6 @@ type AnimationStep =
     | 'filling'     // 4. フォーム自動入力
     | 'logging';    // 5. 送信完了ログ
 
-import { Background3D } from '@/components/landing/Background3D';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -116,7 +115,6 @@ export function Hero() {
 
     return (
         <section className="relative overflow-hidden pt-32 pb-20 md:pt-48 md:pb-32">
-            <Background3D />
 
             <div className="mx-auto max-w-7xl px-6 text-center relative z-10">
 
