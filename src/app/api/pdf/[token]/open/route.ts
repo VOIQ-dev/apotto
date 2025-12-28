@@ -1,9 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from "next/server";
 
-import { createSupabaseServiceClient } from '@/lib/supabaseServer';
+import { createSupabaseServiceClient } from "@/lib/supabaseServer";
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 type RouteContext = {
   params: Promise<{ token: string }>;
@@ -16,7 +16,7 @@ type RequestBody = {
 };
 
 function extractViewerEmail(body: RequestBody): string {
-  return String(body.viewer_email ?? body.viewerEmail ?? body.email ?? '')
+  return String(body.viewer_email ?? body.viewerEmail ?? body.email ?? "")
     .trim()
     .toLowerCase();
 }
@@ -26,8 +26,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
     const { token } = await context.params;
     if (!token) {
       return NextResponse.json(
-        { error: 'トークンが指定されていません' },
-        { status: 400 }
+        { error: "トークンが指定されていません" },
+        { status: 400 },
       );
     }
 
@@ -35,30 +35,35 @@ export async function POST(request: NextRequest, context: RouteContext) {
     const viewerEmail = extractViewerEmail(body);
     if (!viewerEmail) {
       return NextResponse.json(
-        { error: 'viewer_email は必須です' },
-        { status: 400 }
+        { error: "viewer_email は必須です" },
+        { status: 400 },
       );
     }
 
     const supabase = createSupabaseServiceClient();
-    const bucketName = process.env.SUPABASE_STORAGE_BUCKET || 'pdfs';
+    const bucketName = process.env.NEXT_PUBLIC_SUPABASE_BUCKET || "pdf-assets";
 
     // PDF送信ログ取得
     const { data: sendLog, error: dbError } = await supabase
-      .from('pdf_send_logs')
+      .from("pdf_send_logs")
       .select(
-        'id, company_id, pdf_id, is_revoked, created_at, pdf:pdfs(storage_path, original_filename, size_bytes, is_deleted)'
+        "id, company_id, pdf_id, is_revoked, created_at, pdf:pdfs(storage_path, original_filename, size_bytes, is_deleted)",
       )
-      .eq('token', token)
+      .eq("token", token)
       .maybeSingle();
 
     if (dbError || !sendLog) {
-      return NextResponse.json({ error: 'PDFが見つかりません' }, { status: 404 });
+      return NextResponse.json(
+        { error: "PDFが見つかりません" },
+        { status: 404 },
+      );
     }
 
     // Supabase の埋め込み結果は型的に配列扱いになることがあるため、単体に正規化する
     const pdfEmbedded = (sendLog as { pdf?: unknown }).pdf;
-    const pdfDoc = (Array.isArray(pdfEmbedded) ? pdfEmbedded[0] : pdfEmbedded) as
+    const pdfDoc = (
+      Array.isArray(pdfEmbedded) ? pdfEmbedded[0] : pdfEmbedded
+    ) as
       | {
           storage_path?: unknown;
           original_filename?: unknown;
@@ -70,29 +75,30 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
     if (sendLog.is_revoked || Boolean(pdfDoc?.is_deleted)) {
       return NextResponse.json(
-        { error: 'この資料は削除されました' },
-        { status: 410 }
+        { error: "この資料は削除されました" },
+        { status: 410 },
       );
     }
 
-    const storagePath = String(pdfDoc?.storage_path ?? '').trim();
+    const storagePath = String(pdfDoc?.storage_path ?? "").trim();
     if (!storagePath) {
       return NextResponse.json(
-        { error: 'PDFの参照先が不正です' },
-        { status: 500 }
+        { error: "PDFの参照先が不正です" },
+        { status: 500 },
       );
     }
 
     // Signed URL（1時間有効）
-    const { data: signedUrlData, error: signedUrlError } = await supabase.storage
-      .from(bucketName)
-      .createSignedUrl(storagePath, 3600);
+    const { data: signedUrlData, error: signedUrlError } =
+      await supabase.storage
+        .from(bucketName)
+        .createSignedUrl(storagePath, 3600);
 
     if (signedUrlError || !signedUrlData?.signedUrl) {
-      console.error('[pdf/open] Failed to create signed URL:', signedUrlError);
+      console.error("[pdf/open] Failed to create signed URL:", signedUrlError);
       return NextResponse.json(
-        { error: '署名付きURLの生成に失敗しました' },
-        { status: 500 }
+        { error: "署名付きURLの生成に失敗しました" },
+        { status: 500 },
       );
     }
 
@@ -100,7 +106,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
     // 開封イベント記録
     const { error: upsertError } = await supabase
-      .from('pdf_open_events')
+      .from("pdf_open_events")
       .upsert(
         {
           company_id: (sendLog as { company_id?: unknown }).company_id ?? null,
@@ -113,18 +119,18 @@ export async function POST(request: NextRequest, context: RouteContext) {
           max_page_reached: 1,
           elapsed_seconds_max: 0,
         },
-        { onConflict: 'pdf_send_log_id,viewer_email', ignoreDuplicates: false }
+        { onConflict: "pdf_send_log_id,viewer_email", ignoreDuplicates: false },
       );
 
     if (upsertError) {
-      console.error('[pdf/open] upsert failed', upsertError);
+      console.error("[pdf/open] upsert failed", upsertError);
     }
 
     return NextResponse.json({
       success: true,
       pdf: {
         id: sendLog.pdf_id,
-        filename: String(pdfDoc?.original_filename ?? ''),
+        filename: String(pdfDoc?.original_filename ?? ""),
         size: Number(pdfDoc?.size_bytes ?? 0),
         createdAt: sendLog.created_at,
         signedUrl: signedUrlData.signedUrl,
@@ -132,10 +138,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
       },
     });
   } catch (err) {
-    console.error('[pdf/open] Unexpected error:', err);
+    console.error("[pdf/open] Unexpected error:", err);
     return NextResponse.json(
-      { error: '予期しないエラーが発生しました' },
-      { status: 500 }
+      { error: "予期しないエラーが発生しました" },
+      { status: 500 },
     );
   }
 }
