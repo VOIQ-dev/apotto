@@ -1,5 +1,5 @@
 # Playwright対応 Node.js イメージ
-FROM mcr.microsoft.com/playwright:v1.49.1-jammy
+FROM mcr.microsoft.com/playwright:v1.57.0-jammy
 
 WORKDIR /app
 
