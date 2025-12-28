@@ -1,28 +1,30 @@
-import express from 'express';
-import cors from 'cors';
-import { chromium } from 'playwright';
+import express from "express";
+import cors from "cors";
+import { chromium } from "playwright";
 const app = express();
 const PORT = process.env.PORT || 3001;
 // CORS設定（Vercelからのリクエストを許可）
 app.use(cors({
-    origin: process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:3000'],
-    methods: ['POST', 'OPTIONS'],
+    origin: process.env.ALLOWED_ORIGINS?.split(",") || [
+        "http://localhost:3000",
+    ],
+    methods: ["POST", "OPTIONS"],
     credentials: true,
 }));
 app.use(express.json());
 // ヘルスチェック
-app.get('/health', (_req, res) => {
-    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+app.get("/health", (_req, res) => {
+    res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 // メインのauto-submitエンドポイント（単一送信）
-app.post('/auto-submit', async (req, res) => {
+app.post("/auto-submit", async (req, res) => {
     const payload = req.body;
-    console.log(`[auto-submit] Request received: url=${payload.url}`);
+    console.log(`[auto-submit] Request received: url=${payload.url}, debug=${payload.debug}`);
     if (!payload.url) {
         return res.status(400).json({
             success: false,
-            logs: ['Missing required field: url'],
-            note: 'URL is required'
+            logs: ["Missing required field: url"],
+            note: "URL is required",
         });
     }
     try {
@@ -41,18 +43,18 @@ app.post('/auto-submit', async (req, res) => {
     }
 });
 // バッチ送信エンドポイント（複数URL連続処理、SSEでストリーミング）
-app.post('/auto-submit/batch', async (req, res) => {
+app.post("/auto-submit/batch", async (req, res) => {
     const { items, debug } = req.body;
-    console.log(`[auto-submit/batch] Request received: ${items?.length || 0} items`);
+    console.log(`[auto-submit/batch] Request received: ${items?.length || 0} items, debug=${debug}`);
     if (!items || !Array.isArray(items) || items.length === 0) {
         return res.status(400).json({
-            error: 'items array is required'
+            error: "items array is required",
         });
     }
     // SSE設定
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
     res.flushHeaders();
     let browser = null;
     try {
@@ -62,13 +64,13 @@ app.post('/auto-submit/batch', async (req, res) => {
             headless: !debug,
             slowMo: debug ? 200 : 0,
             args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-gpu',
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
             ],
         });
-        res.write(`data: ${JSON.stringify({ type: 'browser_ready' })}\n\n`);
+        res.write(`data: ${JSON.stringify({ type: "browser_ready" })}\n\n`);
         // 各アイテムを順次処理
         for (let i = 0; i < items.length; i++) {
             const payload = items[i];
@@ -76,15 +78,15 @@ app.post('/auto-submit/batch', async (req, res) => {
             console.log(`[auto-submit/batch] Processing ${i + 1}/${items.length}: ${payload.url}`);
             // 処理開始を通知
             res.write(`data: ${JSON.stringify({
-                type: 'item_start',
+                type: "item_start",
                 index: i,
-                url: payload.url
+                url: payload.url,
             })}\n\n`);
             try {
                 const result = await autoSubmitWithBrowser(browser, payload);
                 // 処理完了を通知
                 res.write(`data: ${JSON.stringify({
-                    type: 'item_complete',
+                    type: "item_complete",
                     index: i,
                     url: payload.url,
                     success: result.success,
@@ -97,21 +99,21 @@ app.post('/auto-submit/batch', async (req, res) => {
             catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
                 res.write(`data: ${JSON.stringify({
-                    type: 'item_error',
+                    type: "item_error",
                     index: i,
                     url: payload.url,
-                    error: message
+                    error: message,
                 })}\n\n`);
                 console.error(`[auto-submit/batch] Error ${i + 1}/${items.length}: ${message}`);
             }
         }
         // 全完了を通知
-        res.write(`data: ${JSON.stringify({ type: 'batch_complete', total: items.length })}\n\n`);
+        res.write(`data: ${JSON.stringify({ type: "batch_complete", total: items.length })}\n\n`);
     }
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`[auto-submit/batch] Fatal error: ${message}`);
-        res.write(`data: ${JSON.stringify({ type: 'fatal_error', error: message })}\n\n`);
+        res.write(`data: ${JSON.stringify({ type: "fatal_error", error: message })}\n\n`);
     }
     finally {
         if (browser) {
@@ -143,7 +145,7 @@ async function autoSubmitWithBrowser(browser, payload) {
         log(`Navigating to: ${startUrl}`);
         try {
             await page.goto(startUrl, {
-                waitUntil: 'domcontentloaded',
+                waitUntil: "domcontentloaded",
                 timeout: 30000,
             });
             log(`Navigation completed, current URL: ${page.url()}`);
@@ -151,9 +153,14 @@ async function autoSubmitWithBrowser(browser, payload) {
         catch (navError) {
             const msg = navError instanceof Error ? navError.message : String(navError);
             log(`Navigation FAILED - ${msg}`);
-            return { success: false, logs, finalUrl: page?.url(), note: `Navigation failed: ${msg}` };
+            return {
+                success: false,
+                logs,
+                finalUrl: page?.url(),
+                note: `Navigation failed: ${msg}`,
+            };
         }
-        await page.waitForLoadState('networkidle').catch(() => {
+        await page.waitForLoadState("networkidle").catch(() => {
             log(`networkidle timeout (non-fatal)`);
         });
         // Try to find a contact page link and navigate if needed
@@ -163,19 +170,21 @@ async function autoSubmitWithBrowser(browser, payload) {
             log(`Found contact page, navigating to: ${contactUrl}`);
             try {
                 await page.goto(contactUrl, {
-                    waitUntil: 'domcontentloaded',
+                    waitUntil: "domcontentloaded",
                     timeout: 30000,
                 });
                 log(`Contact page navigation completed`);
             }
             catch (contactNavError) {
-                const msg = contactNavError instanceof Error ? contactNavError.message : String(contactNavError);
+                const msg = contactNavError instanceof Error
+                    ? contactNavError.message
+                    : String(contactNavError);
                 log(`Contact page navigation FAILED - ${msg}`);
             }
-            if (contactUrl.includes('#')) {
+            if (contactUrl.includes("#")) {
                 const hash = new URL(contactUrl).hash;
                 if (hash) {
-                    const id = hash.replace('#', '');
+                    const id = hash.replace("#", "");
                     const anchor = page.locator(`#${id}`);
                     if ((await anchor.count()) > 0) {
                         await anchor.scrollIntoViewIfNeeded().catch(() => { });
@@ -195,7 +204,7 @@ async function autoSubmitWithBrowser(browser, payload) {
                 success: false,
                 logs,
                 finalUrl: page.url(),
-                note: 'Form not found',
+                note: "Form not found",
             };
         }
         log(`Form found and filled`);
@@ -210,7 +219,7 @@ async function autoSubmitWithBrowser(browser, payload) {
         return { success: submitted, logs, finalUrl };
     }
     catch (error) {
-        const message = error instanceof Error ? error.message : String(error ?? 'Unknown error');
+        const message = error instanceof Error ? error.message : String(error ?? "Unknown error");
         log(`UNEXPECTED ERROR: ${message}`);
         if (page)
             await page.close().catch(() => { });
@@ -238,16 +247,18 @@ async function autoSubmit(payload) {
                 headless: !payload.debug,
                 slowMo: payload.debug ? 200 : 0,
                 args: [
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-gpu',
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
                 ],
             });
             log(`Step 1: Browser launched successfully`);
         }
         catch (launchError) {
-            const msg = launchError instanceof Error ? launchError.message : String(launchError);
+            const msg = launchError instanceof Error
+                ? launchError.message
+                : String(launchError);
             log(`Step 1: FAILED to launch browser - ${msg}`);
             return { success: false, logs, note: `Browser launch failed: ${msg}` };
         }
@@ -259,7 +270,7 @@ async function autoSubmit(payload) {
         log(`Step 3: Navigating to: ${startUrl}`);
         try {
             await page.goto(startUrl, {
-                waitUntil: 'domcontentloaded',
+                waitUntil: "domcontentloaded",
                 timeout: 30000,
             });
             log(`Step 3: Navigation completed, current URL: ${page.url()}`);
@@ -267,9 +278,14 @@ async function autoSubmit(payload) {
         catch (navError) {
             const msg = navError instanceof Error ? navError.message : String(navError);
             log(`Step 3: Navigation FAILED - ${msg}`);
-            return { success: false, logs, finalUrl: page?.url(), note: `Navigation failed: ${msg}` };
+            return {
+                success: false,
+                logs,
+                finalUrl: page?.url(),
+                note: `Navigation failed: ${msg}`,
+            };
         }
-        await page.waitForLoadState('networkidle').catch(() => {
+        await page.waitForLoadState("networkidle").catch(() => {
             log(`Step 3: networkidle timeout (non-fatal)`);
         });
         // Try to find a contact page link and navigate if needed
@@ -279,20 +295,22 @@ async function autoSubmit(payload) {
             log(`Step 4: Found contact page, navigating to: ${contactUrl}`);
             try {
                 await page.goto(contactUrl, {
-                    waitUntil: 'domcontentloaded',
+                    waitUntil: "domcontentloaded",
                     timeout: 30000,
                 });
                 log(`Step 4: Contact page navigation completed`);
             }
             catch (contactNavError) {
-                const msg = contactNavError instanceof Error ? contactNavError.message : String(contactNavError);
+                const msg = contactNavError instanceof Error
+                    ? contactNavError.message
+                    : String(contactNavError);
                 log(`Step 4: Contact page navigation FAILED - ${msg}`);
             }
             // If only hash changed, ensure section is in view
-            if (contactUrl.includes('#')) {
+            if (contactUrl.includes("#")) {
                 const hash = new URL(contactUrl).hash;
                 if (hash) {
-                    const id = hash.replace('#', '');
+                    const id = hash.replace("#", "");
                     const anchor = page.locator(`#${id}`);
                     if ((await anchor.count()) > 0) {
                         await anchor.scrollIntoViewIfNeeded().catch(() => { });
@@ -312,24 +330,26 @@ async function autoSubmit(payload) {
                 success: false,
                 logs,
                 finalUrl: page.url(),
-                note: 'Form not found',
+                note: "Form not found",
             };
         }
         log(`Step 5: Form found and filled`);
         // Try submit
         log(`Step 6: Submitting form`);
         const submitted = await submitFormAnyContext(page, log);
-        log(submitted ? `Step 6: Form submitted successfully` : `Step 6: Form submission FAILED`);
+        log(submitted
+            ? `Step 6: Form submitted successfully`
+            : `Step 6: Form submission FAILED`);
         const finalUrl = page.url();
         log(`=== autoSubmit END === success=${submitted}, finalUrl=${finalUrl}`);
         return { success: submitted, logs, finalUrl };
     }
     catch (error) {
-        const message = error instanceof Error ? error.message : String(error ?? 'Unknown error');
+        const message = error instanceof Error ? error.message : String(error ?? "Unknown error");
         const stack = error instanceof Error ? error.stack : undefined;
         log(`UNEXPECTED ERROR: ${message}`);
         if (stack)
-            log(`Stack: ${stack.split('\n').slice(0, 3).join(' | ')}`);
+            log(`Stack: ${stack.split("\n").slice(0, 3).join(" | ")}`);
         return { success: false, logs, finalUrl: page?.url(), note: message };
     }
     finally {
@@ -360,7 +380,7 @@ async function findContactPage(page, log) {
     for (const sel of selectors) {
         const link = await page.locator(sel).first();
         if (await link.count()) {
-            const href = await link.getAttribute('href');
+            const href = await link.getAttribute("href");
             if (href) {
                 const resolved = new URL(href, page.url()).toString();
                 log(`Found contact link via selector ${sel}: ${resolved}`);
@@ -369,12 +389,12 @@ async function findContactPage(page, log) {
         }
     }
     const anchorCandidates = [
-        'contact',
-        'toiawase',
-        'inquiry',
-        'お問い合わせ',
-        '問い合わせ',
-        'support',
+        "contact",
+        "toiawase",
+        "inquiry",
+        "お問い合わせ",
+        "問い合わせ",
+        "support",
     ];
     for (const id of anchorCandidates) {
         const anchor = page.locator(`#${id}`).first();
@@ -386,25 +406,25 @@ async function findContactPage(page, log) {
         }
     }
     const candidates = await page.evaluate(() => {
-        const as = Array.from(document.querySelectorAll('a'));
+        const as = Array.from(document.querySelectorAll("a"));
         return as
             .map((a) => ({
-            href: (a.getAttribute('href') || '').trim(),
-            text: (a.textContent || '').trim(),
+            href: (a.getAttribute("href") || "").trim(),
+            text: (a.textContent || "").trim(),
         }))
             .slice(0, 500);
     });
     const keywordParts = [
-        'contact',
-        'contact-us',
-        'contactus',
-        'inquiry',
-        'toiawase',
-        'support',
-        'help',
-        'feedback',
-        'お問い合わせ',
-        '問い合わせ',
+        "contact",
+        "contact-us",
+        "contactus",
+        "inquiry",
+        "toiawase",
+        "support",
+        "help",
+        "feedback",
+        "お問い合わせ",
+        "問い合わせ",
     ];
     for (const c of candidates) {
         const hay = `${c.href} ${c.text}`.toLowerCase();
@@ -419,23 +439,23 @@ async function findContactPage(page, log) {
     const url = new URL(page.url());
     const base = `${url.protocol}//${url.host}`;
     const pathCandidates = [
-        '/contact',
-        '/contact/',
-        '/contact-us',
-        '/contactus',
-        '/inquiry',
-        '/inquiries',
-        '/support',
-        '/toiawase',
-        '/company/contact',
-        '/info/contact',
+        "/contact",
+        "/contact/",
+        "/contact-us",
+        "/contactus",
+        "/inquiry",
+        "/inquiries",
+        "/support",
+        "/toiawase",
+        "/company/contact",
+        "/info/contact",
     ];
     for (const path of pathCandidates) {
         const candidate = new URL(path, base).toString();
         log(`Path candidate: ${candidate}`);
         return candidate;
     }
-    log('No explicit contact link/anchor found; staying on current page');
+    log("No explicit contact link/anchor found; staying on current page");
     return null;
 }
 async function findAndFillForm(page, payload, log) {
@@ -443,7 +463,7 @@ async function findAndFillForm(page, payload, log) {
         "form[action*='contact']",
         "form[action*='inquiry']",
         "form[action*='toiawase']",
-        'form:has(input), form:has(textarea)',
+        "form:has(input), form:has(textarea)",
     ];
     let formFound = null;
     for (const fs of formLocators) {
@@ -455,10 +475,10 @@ async function findAndFillForm(page, payload, log) {
         }
     }
     if (!formFound) {
-        const anyForm = page.locator('form').first();
+        const anyForm = page.locator("form").first();
         if ((await anyForm.count()) > 0) {
             formFound = anyForm;
-            log('Fallback: using first form on the page');
+            log("Fallback: using first form on the page");
         }
     }
     if (!formFound)
@@ -653,64 +673,96 @@ async function findAndFillForm(page, payload, log) {
     await fillByLabel(page, formFound, [
         {
             keywords: [
-                '会社名',
-                '御社名',
-                '企業名',
-                '貴社名',
-                'Company',
-                'Organization',
-                'Corporate',
+                "会社名",
+                "御社名",
+                "企業名",
+                "貴社名",
+                "Company",
+                "Organization",
+                "Corporate",
             ],
             value: payload.company,
         },
         {
             keywords: [
-                '部署',
-                '部署名',
-                '所属',
-                '所属部署',
-                '営業部',
-                'Department',
-                'Division',
+                "部署",
+                "部署名",
+                "所属",
+                "所属部署",
+                "営業部",
+                "Department",
+                "Division",
             ],
             value: payload.department,
         },
         {
             keywords: [
-                '役職',
-                '肩書',
-                '肩書き',
-                '一般社員',
-                'Position',
-                'Title',
-                'Job Title',
-                'Post',
+                "役職",
+                "肩書",
+                "肩書き",
+                "一般社員",
+                "Position",
+                "Title",
+                "Job Title",
+                "Post",
             ],
             value: payload.title,
         },
         {
             keywords: [
-                '担当者',
-                'ご担当者',
-                '担当者名',
-                'Person',
-                'Contact person',
-                'Your name',
+                "担当者",
+                "ご担当者",
+                "担当者名",
+                "Person",
+                "Contact person",
+                "Your name",
             ],
             value: payload.person || payload.name,
         },
-        { keywords: ['氏名', 'お名前', 'Name'], value: payload.name },
-        { keywords: ['姓', '苗字', 'Last Name', 'Family Name'], value: payload.lastName },
-        { keywords: ['名', 'First Name', 'Given Name'], value: payload.firstName },
-        { keywords: ['ふりがな', 'フリガナ', 'カナ', 'よみがな', 'ヨミガナ', 'Furigana', 'Kana'], value: payload.fullNameKana },
-        { keywords: ['姓（ふりがな）', 'せい', 'セイ', 'みょうじ', 'ミョウジ'], value: payload.lastNameKana },
-        { keywords: ['名（ふりがな）', 'めい', 'メイ', 'なまえ', 'ナマエ'], value: payload.firstNameKana },
-        { keywords: ['メール', 'E-mail', 'Email'], value: payload.email },
-        { keywords: ['メール確認', 'メールアドレス（確認）', 'メールチェック', 'Email Confirmation', 'Email Check'], value: payload.email },
-        { keywords: ['電話', 'Tel', 'Phone'], value: payload.phone },
-        { keywords: ['件名', 'Subject', '題名'], value: payload.subject },
+        { keywords: ["氏名", "お名前", "Name"], value: payload.name },
         {
-            keywords: ['本文', 'お問い合わせ内容', 'Message', '内容'],
+            keywords: ["姓", "苗字", "Last Name", "Family Name"],
+            value: payload.lastName,
+        },
+        {
+            keywords: ["名", "First Name", "Given Name"],
+            value: payload.firstName,
+        },
+        {
+            keywords: [
+                "ふりがな",
+                "フリガナ",
+                "カナ",
+                "よみがな",
+                "ヨミガナ",
+                "Furigana",
+                "Kana",
+            ],
+            value: payload.fullNameKana,
+        },
+        {
+            keywords: ["姓（ふりがな）", "せい", "セイ", "みょうじ", "ミョウジ"],
+            value: payload.lastNameKana,
+        },
+        {
+            keywords: ["名（ふりがな）", "めい", "メイ", "なまえ", "ナマエ"],
+            value: payload.firstNameKana,
+        },
+        { keywords: ["メール", "E-mail", "Email"], value: payload.email },
+        {
+            keywords: [
+                "メール確認",
+                "メールアドレス（確認）",
+                "メールチェック",
+                "Email Confirmation",
+                "Email Check",
+            ],
+            value: payload.email,
+        },
+        { keywords: ["電話", "Tel", "Phone"], value: payload.phone },
+        { keywords: ["件名", "Subject", "題名"], value: payload.subject },
+        {
+            keywords: ["本文", "お問い合わせ内容", "Message", "内容"],
             value: payload.message,
         },
     ], log);
@@ -719,29 +771,29 @@ async function findAndFillForm(page, payload, log) {
             "textarea[name*='message']",
             "textarea[id*='message']",
             "textarea[placeholder*='お問い合わせ']",
-            'textarea',
+            "textarea",
         ];
         const found = await locateFirst(page, formFound, messageSelectors);
         if (found) {
             await found.fill(payload.message);
-            log('Filled message textarea');
+            log("Filled message textarea");
         }
     }
     // セレクトボックス：最初の有効なオプションを選択
-    const selects = formFound.locator('select');
+    const selects = formFound.locator("select");
     const selectCount = await selects.count();
     for (let i = 0; i < selectCount; i++) {
         const select = selects.nth(i);
         try {
             // 最初の有効なオプション（空でない値）を選択
-            const options = select.locator('option');
+            const options = select.locator("option");
             const optionCount = await options.count();
             for (let j = 0; j < optionCount; j++) {
                 const option = options.nth(j);
-                const value = await option.getAttribute('value');
+                const value = await option.getAttribute("value");
                 const text = await option.textContent();
                 // 空の値や「選択してください」系をスキップ
-                if (value && value !== '' && !text?.includes('選択')) {
+                if (value && value !== "" && !text?.includes("選択")) {
                     await select.selectOption({ index: j });
                     log(`Selected option index ${j} in select[${i}]`);
                     break;
@@ -775,7 +827,7 @@ async function findAndFillForm(page, payload, log) {
     for (let i = 0; i < radioCount; i++) {
         const radio = radios.nth(i);
         try {
-            const name = await radio.getAttribute('name');
+            const name = await radio.getAttribute("name");
             if (name && !radioGroups.has(name)) {
                 const isChecked = await radio.isChecked();
                 if (!isChecked) {
@@ -809,7 +861,7 @@ async function submitForm(page, log, dialogState) {
                 // 送信ボタンをクリック
                 await Promise.all([
                     page
-                        .waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 5000 })
+                        .waitForNavigation({ waitUntil: "domcontentloaded", timeout: 5000 })
                         .catch(() => { }),
                     btn.click({ timeout: 3000 }).catch(() => { }),
                 ]);
@@ -821,15 +873,18 @@ async function submitForm(page, log, dialogState) {
                     .locator("button:has-text('送信'), input[type='submit']")
                     .first();
                 if ((await finalBtn.count()) > 0) {
-                    log('Confirmation page detected, clicking final submit');
+                    log("Confirmation page detected, clicking final submit");
                     const urlBeforeFinal = page.url();
                     await Promise.all([
                         page
-                            .waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 5000 })
+                            .waitForNavigation({
+                            waitUntil: "domcontentloaded",
+                            timeout: 5000,
+                        })
                             .catch(() => { }),
                         finalBtn.click({ timeout: 3000 }).catch(() => { }),
                     ]);
-                    log('Clicked final submit');
+                    log("Clicked final submit");
                     await page.waitForTimeout(500);
                     // 最終送信後のチェック
                     return await verifySubmissionSuccess(page, urlBeforeFinal, dialogState.detected, dialogState.message, log);
@@ -844,7 +899,7 @@ async function submitForm(page, log, dialogState) {
             }
         }
     }
-    log('No submit button found');
+    log("No submit button found");
     return false;
 }
 // 送信成功の厳密な検証（高速化版）
@@ -855,15 +910,15 @@ async function verifySubmissionSuccess(page, urlBefore, dialogDetected, dialogMe
     // 0. ダイアログで成功メッセージが表示された場合
     if (dialogDetected && dialogMessage) {
         const successKeywords = [
-            'ありがとう',
-            '送信完了',
-            '送信しました',
-            '受け付けました',
-            'thank you',
-            'success',
-            'submitted',
-            'received',
-            '完了',
+            "ありがとう",
+            "送信完了",
+            "送信しました",
+            "受け付けました",
+            "thank you",
+            "success",
+            "submitted",
+            "received",
+            "完了",
         ];
         const messageLower = dialogMessage.toLowerCase();
         const hasSuccessKeyword = successKeywords.some((keyword) => messageLower.includes(keyword.toLowerCase()));
@@ -872,7 +927,14 @@ async function verifySubmissionSuccess(page, urlBefore, dialogDetected, dialogMe
             return true;
         }
         // エラー系キーワードがあれば失敗
-        const errorKeywords = ['エラー', 'error', '失敗', 'failed', '必須', 'required'];
+        const errorKeywords = [
+            "エラー",
+            "error",
+            "失敗",
+            "failed",
+            "必須",
+            "required",
+        ];
         const hasErrorKeyword = errorKeywords.some((keyword) => messageLower.includes(keyword.toLowerCase()));
         if (hasErrorKeyword) {
             log(`❌ Error dialog detected: "${dialogMessage}"`);
@@ -880,30 +942,32 @@ async function verifySubmissionSuccess(page, urlBefore, dialogDetected, dialogMe
         }
     }
     // 1. ページ全体のテキストを一度に取得（高速）
-    const pageText = await page.evaluate(() => {
-        return document.body?.innerText || '';
-    }).catch(() => '');
+    const pageText = await page
+        .evaluate(() => {
+        return document.body?.innerText || "";
+    })
+        .catch(() => "");
     const pageTextLower = pageText.toLowerCase();
     log(`Page text length: ${pageText.length} characters`);
     // 2. エラーキーワードチェック（優先）
     const errorKeywords = [
         // 日本語
-        '必須項目',
-        '必須です',
-        '入力してください',
-        '入力されていません',
-        'エラーが発生',
-        '送信に失敗',
-        '正しく入力',
-        '確認してください',
+        "必須項目",
+        "必須です",
+        "入力してください",
+        "入力されていません",
+        "エラーが発生",
+        "送信に失敗",
+        "正しく入力",
+        "確認してください",
         // 英語
-        'required field',
-        'please enter',
-        'invalid',
-        'error occurred',
-        'failed to send',
-        'please check',
-        'validation error',
+        "required field",
+        "please enter",
+        "invalid",
+        "error occurred",
+        "failed to send",
+        "please check",
+        "validation error",
     ];
     for (const keyword of errorKeywords) {
         if (pageTextLower.includes(keyword.toLowerCase())) {
@@ -914,26 +978,26 @@ async function verifySubmissionSuccess(page, urlBefore, dialogDetected, dialogMe
     // 3. 成功キーワードチェック
     const successKeywords = [
         // 日本語
-        'ありがとうございました',
-        'ありがとうございます',
-        'お問い合わせを受け付けました',
-        '送信完了',
-        '送信しました',
-        '送信が完了',
-        '受け付けました',
-        '受付完了',
-        '完了しました',
-        'お問い合わせいただき',
-        '送信いただき',
+        "ありがとうございました",
+        "ありがとうございます",
+        "お問い合わせを受け付けました",
+        "送信完了",
+        "送信しました",
+        "送信が完了",
+        "受け付けました",
+        "受付完了",
+        "完了しました",
+        "お問い合わせいただき",
+        "送信いただき",
         // 英語
-        'thank you',
-        'thanks for',
-        'successfully submitted',
-        'message sent',
-        'inquiry received',
-        'request received',
-        'submission successful',
-        'form submitted',
+        "thank you",
+        "thanks for",
+        "successfully submitted",
+        "message sent",
+        "inquiry received",
+        "request received",
+        "submission successful",
+        "form submitted",
     ];
     for (const keyword of successKeywords) {
         if (pageTextLower.includes(keyword.toLowerCase())) {
@@ -944,14 +1008,14 @@ async function verifySubmissionSuccess(page, urlBefore, dialogDetected, dialogMe
     // 4. URL変化チェック（サンクスページへのリダイレクト）
     if (urlChanged) {
         const thanksPatterns = [
-            'thanks',
-            'thank-you',
-            'complete',
-            'success',
-            'confirmation',
-            'sent',
-            'kanryou',
-            '完了',
+            "thanks",
+            "thank-you",
+            "complete",
+            "success",
+            "confirmation",
+            "sent",
+            "kanryou",
+            "完了",
         ];
         const urlLower = urlAfter.toLowerCase();
         const isThanksPage = thanksPatterns.some((pattern) => urlLower.includes(pattern));
@@ -988,14 +1052,14 @@ async function findAndFillFormAnyContext(page, payload, log) {
 }
 async function submitFormAnyContext(page, log) {
     // alert/confirm/promptダイアログの監視（Page レベルで設定）
-    const dialogState = { detected: false, message: '' };
+    const dialogState = { detected: false, message: "" };
     const dialogHandler = async (dialog) => {
         dialogState.message = dialog.message();
         dialogState.detected = true;
         log(`Dialog detected: ${dialog.type()} - "${dialogState.message}"`);
         await dialog.accept(); // 自動で閉じる
     };
-    page.on('dialog', dialogHandler);
+    page.on("dialog", dialogHandler);
     try {
         if (await submitForm(page, log, dialogState))
             return true;
@@ -1009,7 +1073,7 @@ async function submitFormAnyContext(page, log) {
     }
     finally {
         // イベントリスナーをクリーンアップ
-        page.off('dialog', dialogHandler);
+        page.off("dialog", dialogHandler);
     }
 }
 async function fillByLabel(page, scope, rules, log) {
@@ -1017,9 +1081,9 @@ async function fillByLabel(page, scope, rules, log) {
         if (!rule.value)
             continue;
         for (const kw of rule.keywords) {
-            const label = scope.locator('label', { hasText: kw }).first();
+            const label = scope.locator("label", { hasText: kw }).first();
             if ((await label.count()) > 0) {
-                const forId = await label.getAttribute('for');
+                const forId = await label.getAttribute("for");
                 if (forId) {
                     const target = scope.locator(`#${CSS.escape(forId)}`);
                     if ((await target.count()) > 0) {
@@ -1029,7 +1093,7 @@ async function fillByLabel(page, scope, rules, log) {
                     }
                 }
                 else {
-                    const target = label.locator('input,textarea');
+                    const target = label.locator("input,textarea");
                     if ((await target.count()) > 0) {
                         await target
                             .first()

@@ -55,7 +55,9 @@ type Result = {
 app.post("/auto-submit", async (req, res) => {
   const payload = req.body as Payload;
 
-  console.log(`[auto-submit] Request received: url=${payload.url}`);
+  console.log(
+    `[auto-submit] Request received: url=${payload.url}, debug=${payload.debug}`,
+  );
 
   if (!payload.url) {
     return res.status(400).json({
@@ -85,7 +87,7 @@ app.post("/auto-submit/batch", async (req, res) => {
   const { items, debug } = req.body as { items: Payload[]; debug?: boolean };
 
   console.log(
-    `[auto-submit/batch] Request received: ${items?.length || 0} items`,
+    `[auto-submit/batch] Request received: ${items?.length || 0} items, debug=${debug}`,
   );
 
   if (!items || !Array.isArray(items) || items.length === 0) {
