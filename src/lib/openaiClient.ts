@@ -1,30 +1,30 @@
-import OpenAI from 'openai';
+import OpenAI from "openai";
 import type {
   Response as OpenAIResponse,
   ResponseCreateParamsNonStreaming,
   ResponseCreateParamsStreaming,
-} from 'openai/resources/responses/responses';
+} from "openai/resources/responses/responses";
 
 import {
   MISSING_FIELD_PLACEHOLDER,
   isPlaceholderValue,
-} from '@/lib/placeholders';
+} from "@/lib/placeholders";
 import {
   ProductContext,
   formatProductContextForPrompt,
-} from '@/lib/productContext';
+} from "@/lib/productContext";
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const RAW_OPENAI_API_URL = process.env.OPENAI_API_URL;
-const DEFAULT_MODEL = process.env.OPENAI_SALES_MODEL ?? 'gpt-5-mini';
-const ALLOWED_MODELS = new Set(['gpt-5-mini', 'gpt-5-nano']);
+const DEFAULT_MODEL = process.env.OPENAI_SALES_MODEL ?? "gpt-5-mini";
+const ALLOWED_MODELS = new Set(["gpt-5-mini", "gpt-5-nano"]);
 const FALLBACK_MODEL: Record<string, string | undefined> = {
-  'gpt-5-mini': 'gpt-5-nano',
+  "gpt-5-mini": "gpt-5-nano",
 };
-const REASONING_SUPPORTED_MODELS = new Set(['gpt-5-mini', 'gpt-5']);
+const REASONING_SUPPORTED_MODELS = new Set(["gpt-5-mini", "gpt-5"]);
 
 const OPENAI_BASE_URL = RAW_OPENAI_API_URL
-  ? RAW_OPENAI_API_URL.replace(/\/responses$/, '')
+  ? RAW_OPENAI_API_URL.replace(/\/responses$/, "")
   : undefined;
 
 let cachedClient: OpenAI | null = null;
@@ -37,6 +37,7 @@ type SenderProfile = {
   email: string;
   phone?: string;
   subject: string;
+  meetingUrl?: string; // 商談日程URL（任意）
 };
 
 type RecipientProfile = {
@@ -61,8 +62,8 @@ export type SalesCopyRequest = {
   siteSummary: string;
   notes?: string;
   attachments?: AttachmentDescriptor[];
-  tone?: 'friendly' | 'formal' | 'casual';
-  language?: 'ja' | 'en';
+  tone?: "friendly" | "formal" | "casual";
+  language?: "ja" | "en";
   productContext?: ProductContext;
 };
 
@@ -73,8 +74,8 @@ export type SalesCopyResponse = {
 
 class ConfigurationError extends Error {
   constructor() {
-    super('OPENAI_API_KEY が未設定です。環境変数を設定してください。');
-    this.name = 'ConfigurationError';
+    super("OPENAI_API_KEY が未設定です。環境変数を設定してください。");
+    this.name = "ConfigurationError";
   }
 }
 
@@ -92,7 +93,7 @@ function getOpenAIClient(): OpenAI {
 }
 
 export async function generateSalesCopy(
-  input: SalesCopyRequest
+  input: SalesCopyRequest,
 ): Promise<SalesCopyResponse> {
   const client = getOpenAIClient();
   const prompt = buildPrompt(input);
@@ -101,16 +102,16 @@ export async function generateSalesCopy(
   if (!ALLOWED_MODELS.has(requestedModel)) {
     throw new Error(
       `サポートされていないモデルです。使用可能なモデル: ${Array.from(
-        ALLOWED_MODELS
-      ).join(', ')}`
+        ALLOWED_MODELS,
+      ).join(", ")}`,
     );
   }
 
   const execute = async (modelName: string) => {
-    console.info('[OpenAI] Sending request', {
+    console.info("[OpenAI] Sending request", {
       model: modelName,
-      tone: input.tone ?? 'friendly',
-      language: input.language ?? 'ja',
+      tone: input.tone ?? "friendly",
+      language: input.language ?? "ja",
     });
     const allowTemperature = !REASONING_SUPPORTED_MODELS.has(modelName);
     const payload: ResponseCreateParamsNonStreaming = {
@@ -122,19 +123,19 @@ export async function generateSalesCopy(
     };
 
     if (REASONING_SUPPORTED_MODELS.has(modelName)) {
-      payload.reasoning = { effort: 'low' };
-      payload.text = { format: { type: 'text' } };
+      payload.reasoning = { effort: "low" };
+      payload.text = { format: { type: "text" } };
     }
 
     const response: OpenAIResponse = await client.responses.create(payload);
-    console.info('[OpenAI] Response received', {
+    console.info("[OpenAI] Response received", {
       model: modelName,
-      finish_reason: response.usage?.output_tokens ? 'completed' : 'unknown',
+      finish_reason: response.usage?.output_tokens ? "completed" : "unknown",
       outputTokens: response.usage?.output_tokens,
     });
     const text = response.output_text?.trim();
     if (!text) {
-      throw new Error('OpenAI APIの応答から文章を取得できませんでした。');
+      throw new Error("OpenAI APIの応答から文章を取得できませんでした。");
     }
     return { text, raw: response };
   };
@@ -145,12 +146,12 @@ export async function generateSalesCopy(
     if (
       error instanceof OpenAI.APIError &&
       error.status === 429 &&
-      (error.error?.code === 'insufficient_quota' ||
-        error.error?.code === 'rate_limit_exceeded')
+      (error.error?.code === "insufficient_quota" ||
+        error.error?.code === "rate_limit_exceeded")
     ) {
       const fallback = FALLBACK_MODEL[requestedModel];
       if (fallback) {
-        console.warn('[OpenAI] Primary model quota issue, falling back', {
+        console.warn("[OpenAI] Primary model quota issue, falling back", {
           primary: requestedModel,
           fallback,
           status: error.status,
@@ -161,26 +162,26 @@ export async function generateSalesCopy(
     }
 
     if (error instanceof OpenAI.APIError) {
-      console.error('[OpenAI] API error', {
+      console.error("[OpenAI] API error", {
         model: requestedModel,
         status: error.status,
         code: error.error?.code,
         message: error.message,
       });
       throw new Error(
-        `OpenAI API呼び出しに失敗しました: ${error.status ?? ''} ${
+        `OpenAI API呼び出しに失敗しました: ${error.status ?? ""} ${
           error.message
-        }`
+        }`,
       );
     }
-    console.error('[OpenAI] Unexpected error', error);
+    console.error("[OpenAI] Unexpected error", error);
     throw error;
   }
 }
 
 // Streaming version: yields text deltas as they arrive
 export async function* generateSalesCopyStream(
-  input: SalesCopyRequest
+  input: SalesCopyRequest,
 ): AsyncIterable<string> {
   const client = getOpenAIClient();
   const prompt = buildPrompt(input);
@@ -188,8 +189,8 @@ export async function* generateSalesCopyStream(
   if (!ALLOWED_MODELS.has(requestedModel)) {
     throw new Error(
       `サポートされていないモデルです。使用可能なモデル: ${Array.from(
-        ALLOWED_MODELS
-      ).join(', ')}`
+        ALLOWED_MODELS,
+      ).join(", ")}`,
     );
   }
 
@@ -201,8 +202,8 @@ export async function* generateSalesCopyStream(
     ...(allowTemperature ? { temperature: 0.4 } : {}),
     ...(REASONING_SUPPORTED_MODELS.has(requestedModel)
       ? {
-          reasoning: { effort: 'low' },
-          text: { format: { type: 'text' } },
+          reasoning: { effort: "low" },
+          text: { format: { type: "text" } },
         }
       : {}),
     stream: true,
@@ -214,13 +215,15 @@ export async function* generateSalesCopyStream(
     output_text?: unknown;
   };
 
-  const stream = (await client.responses.create(payload)) as unknown as AsyncIterable<SalesCopyStreamEvent>;
+  const stream = (await client.responses.create(
+    payload,
+  )) as unknown as AsyncIterable<SalesCopyStreamEvent>;
 
   for await (const event of stream) {
     // responses streaming delivers delta chunks
-    if (event?.type === 'response.output_text.delta' && event?.delta) {
+    if (event?.type === "response.output_text.delta" && event?.delta) {
       yield String(event.delta);
-    } else if (typeof event?.output_text === 'string') {
+    } else if (typeof event?.output_text === "string") {
       yield event.output_text;
     }
   }
@@ -233,55 +236,56 @@ function buildPrompt({
   siteSummary,
   notes,
   attachments = [],
-  tone = 'friendly',
-  language = 'ja',
+  tone = "friendly",
+  language = "ja",
   productContext,
 }: SalesCopyRequest) {
   const toneLabel =
-    tone === 'formal'
-      ? '丁寧でフォーマル'
-      : tone === 'casual'
-      ? 'カジュアルで親しみやすい'
-      : 'ビジネスライクかつ親しみやすい';
-  const langLabel = language === 'en' ? '英語' : '日本語';
+    tone === "formal"
+      ? "丁寧でフォーマル"
+      : tone === "casual"
+        ? "カジュアルで親しみやすい"
+        : "ビジネスライクかつ親しみやすい";
+  const langLabel = language === "en" ? "英語" : "日本語";
 
   // 敬称の組み立て（担当者名 or 部署 or 企業名）
   const recipientGreeting = !isPlaceholderValue(recipient.contactName)
     ? `${recipient.contactName}様`
     : !isPlaceholderValue(recipient.department)
-    ? `${recipient.department}ご担当者様`
-    : !isPlaceholderValue(recipient.companyName)
-    ? `${recipient.companyName}ご担当者様`
-    : 'ご担当者様';
+      ? `${recipient.department}ご担当者様`
+      : !isPlaceholderValue(recipient.companyName)
+        ? `${recipient.companyName}ご担当者様`
+        : "ご担当者様";
 
   const sampleSubject = !isPlaceholderValue(sender.subject)
     ? sender.subject
-    : 'ご提案';
+    : "ご提案";
 
   const attachmentBlock =
     attachments.length > 0
       ? attachments
           .map(
             (attachment, index) =>
-              `${index + 1}. ${attachment.name}: ${attachment.url}`
+              `${index + 1}. ${attachment.name}: ${attachment.url}`,
           )
-          .join('\n')
-      : '';
+          .join("\n")
+      : "";
 
-  const attachmentSection = attachments.length > 0
-    ? `
+  const attachmentSection =
+    attachments.length > 0
+      ? `
 ## 提案資料
 以下の資料を本文内で自然に紹介してください：
 ${attachmentBlock}
 `
-    : '';
+      : "";
 
   const notesSection = notes?.trim()
     ? `
 ## 追加の提案ポイント・メモ
 ${notes.trim()}
 `
-    : '';
+    : "";
 
   const productContextText = formatProductContextForPrompt(productContext);
   const productContextSection = productContextText
@@ -289,7 +293,7 @@ ${notes.trim()}
 ## 自社プロダクト・営業戦略コンテキスト
 ${productContextText}
 `
-    : '';
+    : "";
 
   const structuredInput = JSON.stringify(
     {
@@ -304,7 +308,7 @@ ${productContextText}
       productContext,
     },
     null,
-    2
+    2,
   );
 
   return `
@@ -322,17 +326,17 @@ ${productContextText}
 ## 送信者情報（私たちの会社）
 - 会社名: ${sender.companyName}
 - 担当者名: ${sender.fullName}
-${sender.department ? `- 部署: ${sender.department}` : ''}
-${sender.title ? `- 役職: ${sender.title}` : ''}
+${sender.department ? `- 部署: ${sender.department}` : ""}
+${sender.title ? `- 役職: ${sender.title}` : ""}
 - メールアドレス: ${sender.email}
-${sender.phone ? `- 電話番号: ${sender.phone}` : ''}
+${sender.phone ? `- 電話番号: ${sender.phone}` : ""}
 - 件名案: ${sender.subject}
 
 ## 受信者情報（相手企業）
-${recipient.companyName ? `- 企業名: ${recipient.companyName}` : ''}
-${recipient.contactName ? `- 担当者名: ${recipient.contactName}` : ''}
-${recipient.department ? `- 部署: ${recipient.department}` : ''}
-${recipient.title ? `- 役職: ${recipient.title}` : ''}
+${recipient.companyName ? `- 企業名: ${recipient.companyName}` : ""}
+${recipient.contactName ? `- 担当者名: ${recipient.contactName}` : ""}
+${recipient.department ? `- 部署: ${recipient.department}` : ""}
+${recipient.title ? `- 役職: ${recipient.title}` : ""}
 - 敬称: ${recipientGreeting}
 - 対象URL: ${homepageUrl}
 
@@ -369,13 +373,14 @@ ${attachmentSection}${notesSection}${productContextSection}
 **第3段落: 具体的な提案価値**
 - 相手企業が得られるメリットを**具体的に**説明
 - 可能であれば事例や数値（導入効果、削減時間、改善率など）を挙げる
-- 添付資料がある場合、**こちらで用意したPDF閲覧用のURL（${attachments.length > 0 ? attachments.map(a => a.url).join(', ') : 'なし'}）**を自然に紹介
+- 添付資料がある場合、**こちらで用意したPDF閲覧用のURL（${attachments.length > 0 ? attachments.map((a) => a.url).join(", ") : "なし"}）**を自然に紹介
   - **入力で与えたURL文字列は改変しない**（'{{PDF_LINK_1}}' のような差し込みキーもそのまま記載）
   例: 「詳細は以下の資料でご確認いただけます」「導入事例をまとめた資料をご用意しております」
 
 **第4段落: 行動喚起（CTA）**
 - 具体的な次のアクション提案（例: 「15分程度のオンライン打ち合わせ」「資料送付」「デモ実施」）
 - 相手の負担が少なく、気軽に応じやすい提案にする
+${sender.meetingUrl ? `- **商談日程URL（${sender.meetingUrl}）が提供されている場合、「ご都合の良い日時をこちらからお選びいただけます: ${sender.meetingUrl}」のように、自然な形で記載する**` : ""}
 
 **第5段落: 締めの挨拶**
 - 丁寧な締めの言葉で締めくくる
@@ -423,4 +428,3 @@ ${structuredInput}
 以上の指示に従い、**即送信可能な高品質の営業メール**を作成してください。
 `.trim();
 }
-
