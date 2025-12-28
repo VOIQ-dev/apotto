@@ -707,7 +707,8 @@ function useDashboardMetrics(filters: DashboardFilters): MetricsState {
   return state;
 }
 
-function normalizeDashboardData(raw: unknown, filters: DashboardFilters): DashboardData {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function normalizeDashboardData(raw: unknown, _filters: DashboardFilters): DashboardData {
   if (!raw || typeof raw !== 'object') {
     return emptyDashboardData;
   }

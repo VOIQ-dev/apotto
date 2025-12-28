@@ -124,7 +124,6 @@ type QueueState = {
   error?: string;
 };
 
-const MAX_COMPANY_ROWS = 100;
 const REQUIRED_SENDER_FIELDS: Array<keyof SenderProfile> = [
   'companyName',
   'fullName',
@@ -277,7 +276,7 @@ export default function AiCustomPage() {
     } catch (error) {
       console.warn('[ai-custom] failed to persist senderProfile', error);
     }
-  }, [senderProfile]);
+  }, [senderProfile, restoredSender]);
 
   useEffect(() => {
     if (!restoredProduct) return;
@@ -287,7 +286,7 @@ export default function AiCustomPage() {
     } catch (error) {
       console.warn('[ai-custom] failed to persist productContext', error);
     }
-  }, [productContext]);
+  }, [productContext, restoredProduct]);
 
   const productContextFilled = useMemo(
     () => Object.values(productContext).some((v) => v.trim().length > 0),
@@ -298,7 +297,6 @@ export default function AiCustomPage() {
     () => pdfAssets.filter((pdf) => selectedPdfIds[pdf.id]).map((pdf) => pdf.id),
     [pdfAssets, selectedPdfIds]
   );
-  const selectedPdfCount = selectedPdfIdList.length;
 
   // CSV取り込みを PDF 選択なしでも許可（送信時にPDF未選択なら警告）
   const canUploadCsv = senderMissingFields.length === 0 && productContextFilled;
@@ -398,8 +396,6 @@ export default function AiCustomPage() {
     return { total: sendResults.length, success, failed };
   }, [sendResults]);
 
-  const remainingCapacity = Math.max(0, MAX_COMPANY_ROWS - cards.length);
-  const latestLog = logs.length > 0 ? logs[logs.length - 1] : null;
 
   // AgGrid 列定義
   const leadColumnDefs = useMemo<ColDef<LeadRow>[]>(() => [
@@ -1575,11 +1571,6 @@ export default function AiCustomPage() {
             <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {pdfAssets.map((pdf) => {
                 const isSelected = Boolean(selectedPdfIds[pdf.id]);
-                const placeholderIndex = selectedPdfIdList.indexOf(pdf.id);
-                const placeholder =
-                  placeholderIndex >= 0
-                    ? `{{PDF_LINK_${placeholderIndex + 1}}}`
-                    : '';
 
                 return (
                   <div
@@ -2338,15 +2329,6 @@ function sanitize(value: unknown): string {
   if (typeof value === 'number') return String(value).trim();
   if (typeof value !== 'string') return '';
   return value.trim();
-}
-
-function deriveCompanyNameFromUrl(url: string): string {
-  try {
-    const parsed = new URL(normalizeHomepageUrl(url));
-    return parsed.hostname.replace('www.', '');
-  } catch {
-    return '';
-  }
 }
 
 function normalizeHomepageUrl(value: string): string {

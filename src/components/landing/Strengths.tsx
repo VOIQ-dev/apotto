@@ -1,7 +1,7 @@
 'use client';
 
+import Image from 'next/image';
 import { useEffect, useRef, useState } from 'react';
-import Link from 'next/link';
 
 const companyLogos = [
   { src: '/companyLogo/Green_logo_colored.svg', alt: 'Green' },
@@ -91,9 +91,11 @@ export function Strengths() {
                 key={index}
                 className="grayscale hover:grayscale-0 opacity-60 hover:opacity-100 transition-all duration-300"
               >
-                <img
+                <Image
                   src={logo.src}
                   alt={logo.alt}
+                  width={120}
+                  height={48}
                   className="h-10 md:h-12 w-auto object-contain"
                 />
               </div>

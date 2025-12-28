@@ -254,9 +254,6 @@ function buildPrompt({
     ? `${recipient.companyName}ご担当者様`
     : 'ご担当者様';
 
-  const sampleRecipientCompany = !isPlaceholderValue(recipient.companyName)
-    ? recipient.companyName!
-    : '';
   const sampleSubject = !isPlaceholderValue(sender.subject)
     ? sender.subject
     : 'ご提案';

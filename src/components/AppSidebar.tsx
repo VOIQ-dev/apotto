@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
@@ -65,9 +66,11 @@ export function AppSidebar() {
           <span className="text-2xl font-extrabold tracking-tight leading-none text-emerald-400">
             apotto
           </span>
-          <img
+          <Image
             src="/apotto/apotto_logo.png"
             alt="apotto"
+            width={120}
+            height={64}
             className="h-16 w-auto"
           />
         </Link>

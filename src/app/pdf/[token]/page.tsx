@@ -243,13 +243,6 @@ export default function PdfTokenPage({ params }: PdfTokenPageProps) {
     checkToken();
   }, [token]);
 
-  // 時間フォーマット
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
-
   // リセット
   const handleReset = () => {
     // 最終状態をベストエフォートで保存
@@ -443,6 +436,7 @@ export default function PdfTokenPage({ params }: PdfTokenPageProps) {
                   {pageLoading ? 'ページ読み込み中...' : 'PDF読み込み中...'}
                 </div>
               ) : (
+                // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={pageImage}
                   alt={`ページ ${currentPage}`}

@@ -1,7 +1,8 @@
 'use client';
 
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { createSupabaseBrowserClient } from '@/lib/supabase';
 
@@ -14,7 +15,11 @@ type MeResponse = {
 
 export default function FirstLoginPage() {
   const router = useRouter();
-  const supabase = useMemo(() => createSupabaseBrowserClient(), []);
+  const supabaseRef = useRef<SupabaseClient | null>(null);
+  if (typeof window !== 'undefined' && !supabaseRef.current) {
+    supabaseRef.current = createSupabaseBrowserClient();
+  }
+  const supabase = supabaseRef.current;
 
   const [loading, setLoading] = useState(true);
   const [email, setEmail] = useState('');
@@ -76,6 +81,7 @@ export default function FirstLoginPage() {
 
     setSubmitting(true);
     try {
+      if (!supabase) throw new Error('クライアント未初期化');
       const { error: updateError } = await supabase.auth.updateUser({
         password: p1,
         data: { must_change_password: false },

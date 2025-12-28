@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import Link from 'next/link';
 import { useState, useCallback } from 'react';
 
@@ -120,9 +121,11 @@ export function Hero() {
 
                 {/* ロゴを文言の右上に配置 */}
                 <div className="relative inline-block">
-                    <img
+                    <Image
                         src="/apotto/apotto_logo.png"
                         alt="apotto Logo"
+                        width={320}
+                        height={160}
                         className="absolute -top-8 -right-32 h-40 w-80 hidden sm:block"
                     />
                     <h1 className="mt-6 text-4xl font-bold tracking-tight text-slate-900 sm:text-6xl lg:text-7xl animate-fade-in-up delay-100">

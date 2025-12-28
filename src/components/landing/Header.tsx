@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
 
@@ -24,9 +25,11 @@ export function Header() {
     >
       <div className="mx-auto flex max-w-7xl items-center justify-between px-6">
         <Link href="/" className="flex items-center group">
-          <img
+          <Image
             src="/apotto/apotto_icon.png"
             alt="apotto"
+            width={96}
+            height={96}
             className="h-24 w-auto transition-transform duration-300 group-hover:scale-105"
           />
         </Link>

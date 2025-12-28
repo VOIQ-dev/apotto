@@ -40,8 +40,6 @@ type PdfDailyMetricsRow = {
   opened_count: number | null;
 };
 
-type PdfSendLogIdRow = { id: string };
-
 type PdfOpenEventRow = {
   pdf_id: string;
   pdf_send_log_id: string;

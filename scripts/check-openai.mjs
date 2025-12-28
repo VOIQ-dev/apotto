@@ -11,7 +11,68 @@
  *   - 失敗時はエラーメッセージ
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
+
 const REQUIRED_ENV = ['OPENAI_API_KEY'];
+
+function parseDotEnv(content) {
+  const env = {};
+  const lines = content.split(/\r?\n/);
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+
+    const normalized = line.startsWith('export ') ? line.slice('export '.length) : line;
+    const eqIndex = normalized.indexOf('=');
+    if (eqIndex === -1) continue;
+
+    const key = normalized.slice(0, eqIndex).trim();
+    if (!key) continue;
+
+    let value = normalized.slice(eqIndex + 1).trim();
+
+    // Inline comment stripping (only for unquoted values)
+    const isQuoted =
+      (value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"));
+    if (!isQuoted) {
+      value = value.replace(/\s+#.*$/, '').trim();
+    }
+
+    // Unquote
+    if (value.startsWith('"') && value.endsWith('"')) {
+      value = value.slice(1, -1).replace(/\\n/g, '\n');
+    } else if (value.startsWith("'") && value.endsWith("'")) {
+      value = value.slice(1, -1);
+    }
+
+    env[key] = value;
+  }
+
+  return env;
+}
+
+function loadEnvFromFiles() {
+  // Next.js の慣習に合わせて、.env.local -> .env の順にロード（既存の process.env を優先）
+  const root = process.cwd();
+  const candidates = ['.env.local', '.env'].map((p) => path.join(root, p));
+
+  for (const filePath of candidates) {
+    try {
+      if (!fs.existsSync(filePath)) continue;
+      const content = fs.readFileSync(filePath, 'utf8');
+      const parsed = parseDotEnv(content);
+      for (const [key, value] of Object.entries(parsed)) {
+        if (process.env[key] == null || process.env[key] === '') {
+          process.env[key] = value;
+        }
+      }
+    } catch {
+      // 例: ファイルアクセス権限がない/サンドボックス制約など。ここでは黙ってスキップ。
+    }
+  }
+}
 
 function assertEnv() {
   const missing = REQUIRED_ENV.filter((key) => !process.env[key]);
@@ -47,6 +108,7 @@ async function checkModelsEndpoint() {
 
 async function main() {
   try {
+    loadEnvFromFiles();
     assertEnv();
     console.log('✅ 必須環境変数: OK');
   } catch (error) {
