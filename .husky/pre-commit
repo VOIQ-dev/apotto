@@ -1,11 +1,6 @@
-#!/usr/bin/env sh
-. "$(dirname -- "$0")/_/husky.sh"
-
 # Lint-stagedを実行
 yarn lint-staged
 
 # TypeScriptの型チェック
 echo "Running type check..."
 yarn tsc --noEmit
-
-# コミットメッセージ規約の確認（後でcommit-msgフックで実装）

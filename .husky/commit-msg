@@ -1,6 +1,3 @@
-#!/usr/bin/env sh
-. "$(dirname -- "$0")/_/husky.sh"
-
 # コミットメッセージの取得
 commit_msg=$(cat "$1")
 
