@@ -948,7 +948,7 @@ export default function AiCustomPage() {
           phone: senderProfile.phone,
           subject,
           message: body,
-          debug: true, // デバッグモード：ブラウザを表示
+          debug: false, // 本番環境ではヘッドレスモード
         }),
       });
 
@@ -1072,7 +1072,7 @@ export default function AiCustomPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           items: batchItems.map((item) => item.payload),
-          debug: true, // デバッグモード
+          debug: false, // 本番環境ではヘッドレスモード
         }),
       });
 
