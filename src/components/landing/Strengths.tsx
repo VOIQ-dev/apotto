@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 
 const companyLogos = [
-  { src: '/companyLogo/Green_logo_colored (1).svg', alt: 'Green' },
+  { src: '/companyLogo/Green_logo_colored.svg', alt: 'Green' },
   { src: '/companyLogo/Heroz_logotype_l.png', alt: 'HEROZ' },
   { src: '/companyLogo/MIL_logo_black.png', alt: 'MIL' },
   { src: '/companyLogo/Vario_logo.png', alt: 'Vario' },

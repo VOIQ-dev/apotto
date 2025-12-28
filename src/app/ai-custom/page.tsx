@@ -1,16 +1,44 @@
 'use client';
 
+import Link from 'next/link';
 import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ChangeEvent,
 } from 'react';
 import { read, utils } from 'xlsx';
+import { AgGridReact } from 'ag-grid-react';
+import type {
+  ColDef,
+  GridApi,
+  GridReadyEvent,
+  SelectionChangedEvent,
+  CellValueChangedEvent,
+  RowDragEndEvent,
+} from 'ag-grid-community';
+import { AllCommunityModule, ModuleRegistry, themeQuartz, colorSchemeDarkBlue } from 'ag-grid-community';
 
 import { AppSidebar } from '@/components/AppSidebar';
-import { simulateAiWorkflow, type AiWorkflowRequest } from '@/lib/workflows';
+
+// ag-gridモジュール登録
+ModuleRegistry.registerModules([AllCommunityModule]);
+
+// ag-gridテーマ（ライト/ダーク対応）
+const agGridThemeLight = themeQuartz;
+const agGridThemeDark = themeQuartz.withPart(colorSchemeDarkBlue);
+import {
+  Conversation,
+  ConversationContent,
+  ConversationEmptyState,
+  ConversationScrollButton,
+} from '@/components/ai-elements/conversation';
+import {
+  Message,
+  MessageContent,
+} from '@/components/ai-elements/message';
 import {
   PRODUCT_CONTEXT_GROUPS,
   type ProductContext,
@@ -36,12 +64,6 @@ type CompanyCardField =
   | 'homepageUrl'
   | 'notes';
 
-type TrackingLink = {
-  pdfId: string;
-  token: string;
-  url: string;
-};
-
 type CompanyCard = {
   id: string;
   companyName: string;
@@ -55,14 +77,36 @@ type CompanyCard = {
   status: 'pending' | 'generating' | 'ready' | 'error';
   errorMessage?: string;
   sendEnabled: boolean;
-  attachments: Record<string, TrackingLink>;
+};
+
+type SendResultRow = {
+  companyName: string;
+  homepageUrl: string;
+  email: string;
+  status: 'success' | 'failed';
+  sentAtIso: string;
+};
+
+type LeadRow = {
+  id: string;
+  companyName: string;
+  homepageUrl: string;
+  sendStatus: 'pending' | 'success' | 'failed';
+  intentScore: number | null;
+  isAppointed: boolean;
+  isNg: boolean;
+  contactName: string;
+  department: string;
+  title: string;
+  email: string;
+  importFileName: string;
 };
 
 type PdfAsset = {
   id: string;
   name: string;
   size: number;
-  uploadedAt: number;
+  uploadedAt: string;
 };
 
 type AiUploadState = {
@@ -81,7 +125,6 @@ type QueueState = {
 };
 
 const MAX_COMPANY_ROWS = 100;
-const MAX_PDF_STORAGE_BYTES = 50 * 1024 * 1024;
 const REQUIRED_SENDER_FIELDS: Array<keyof SenderProfile> = [
   'companyName',
   'fullName',
@@ -90,6 +133,10 @@ const REQUIRED_SENDER_FIELDS: Array<keyof SenderProfile> = [
 ];
 
 const PRODUCT_DETAIL_GROUPS = PRODUCT_CONTEXT_GROUPS;
+const STORAGE_KEYS = {
+  sender: 'ai-custom:senderProfile',
+  product: 'ai-custom:productContext',
+} as const;
 
 const SENDER_FIELD_LABELS: Record<keyof SenderProfile, string> = {
   companyName: '会社名',
@@ -112,19 +159,79 @@ export default function AiCustomPage() {
     skippedCount: 0,
   });
   const [pdfAssets, setPdfAssets] = useState<PdfAsset[]>([]);
+  const [pdfLibraryLoading, setPdfLibraryLoading] = useState(false);
+  const [pdfLibraryError, setPdfLibraryError] = useState<string | null>(null);
+  const [selectedPdfIds, setSelectedPdfIds] = useState<Record<string, boolean>>(
+    {}
+  );
   const [queueState, setQueueState] = useState<QueueState>({
     pendingIds: [],
     running: false,
   });
   const [logs, setLogs] = useState<string[]>([]);
   const [isSending, setIsSending] = useState(false);
+  const [sendResults, setSendResults] = useState<SendResultRow[]>([]);
+  const [lastSendFinishedAt, setLastSendFinishedAt] = useState<string | null>(
+    null
+  );
   const [productContext, setProductContext] = useState<ProductContext>(
     createEmptyProductContext
   );
+  const [restoredSender, setRestoredSender] = useState(false);
+  const [restoredProduct, setRestoredProduct] = useState(false);
   const [autoSendEnabled, setAutoSendEnabled] = useState(false);
   const [autoRunStatus, setAutoRunStatus] = useState<'idle' | 'running' | 'error' | 'done'>('idle');
   const [autoRunMessage, setAutoRunMessage] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toastType, setToastType] = useState<'error' | 'warning' | 'success'>('error');
+  const [isDarkMode, setIsDarkMode] = useState(false);
+
+  // ダークモード検出
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    
+    const checkDarkMode = () => {
+      const isDark = document.documentElement.classList.contains('dark') ||
+        window.matchMedia('(prefers-color-scheme: dark)').matches;
+      setIsDarkMode(isDark);
+    };
+
+    checkDarkMode();
+
+    // MutationObserverでclass変更を監視
+    const observer = new MutationObserver(checkDarkMode);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+
+    // メディアクエリの変更も監視
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    mediaQuery.addEventListener('change', checkDarkMode);
+
+    return () => {
+      observer.disconnect();
+      mediaQuery.removeEventListener('change', checkDarkMode);
+    };
+  }, []);
+
+  // AgGrid テーマ（ダークモード対応）
+  const agGridTheme = useMemo(() => {
+    return isDarkMode ? agGridThemeDark : agGridThemeLight;
+  }, [isDarkMode]);
+
+  // AgGrid リード管理
+  const [leads, setLeads] = useState<LeadRow[]>([]);
+  const [leadsLoading, setLeadsLoading] = useState(false);
+  const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(new Set());
+  const [leadsPage, setLeadsPage] = useState(1);
+  const [leadsTotalPages, setLeadsTotalPages] = useState(1);
+  const gridApiRef = useRef<GridApi | null>(null);
+
+  // トースト表示（3秒後に自動消去）
+  const showToast = useCallback((message: string, type: 'error' | 'warning' | 'success' = 'error') => {
+    setToastMessage(message);
+    setToastType(type);
+    setTimeout(() => setToastMessage(null), 4000);
+  }, []);
 
   const senderMissingFields = useMemo(
     () =>
@@ -133,6 +240,148 @@ export default function AiCustomPage() {
       ),
     [senderProfile]
   );
+
+  // 初期ロード: ローカルストレージから入力値を復元
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const rawSender = localStorage.getItem(STORAGE_KEYS.sender);
+      if (rawSender) {
+        const parsed = JSON.parse(rawSender) as SenderProfile;
+        setSenderProfile((prev) => ({ ...prev, ...parsed }));
+        setRestoredSender(true);
+      } else {
+        setRestoredSender(true);
+      }
+      const rawProduct = localStorage.getItem(STORAGE_KEYS.product);
+      if (rawProduct) {
+        const parsed = JSON.parse(rawProduct) as ProductContext;
+        setProductContext((prev) => ({ ...prev, ...parsed }));
+        setRestoredProduct(true);
+      } else {
+        setRestoredProduct(true);
+      }
+    } catch (error) {
+      console.warn('[ai-custom] failed to restore from localStorage', error);
+      setRestoredSender(true);
+      setRestoredProduct(true);
+    }
+  }, []);
+
+  // 自社情報と商品理解をローカルストレージへ保存
+  useEffect(() => {
+    if (!restoredSender) return;
+    if (typeof window === 'undefined') return;
+    try {
+      localStorage.setItem(STORAGE_KEYS.sender, JSON.stringify(senderProfile));
+    } catch (error) {
+      console.warn('[ai-custom] failed to persist senderProfile', error);
+    }
+  }, [senderProfile]);
+
+  useEffect(() => {
+    if (!restoredProduct) return;
+    if (typeof window === 'undefined') return;
+    try {
+      localStorage.setItem(STORAGE_KEYS.product, JSON.stringify(productContext));
+    } catch (error) {
+      console.warn('[ai-custom] failed to persist productContext', error);
+    }
+  }, [productContext]);
+
+  const productContextFilled = useMemo(
+    () => Object.values(productContext).some((v) => v.trim().length > 0),
+    [productContext]
+  );
+
+  const selectedPdfIdList = useMemo(
+    () => pdfAssets.filter((pdf) => selectedPdfIds[pdf.id]).map((pdf) => pdf.id),
+    [pdfAssets, selectedPdfIds]
+  );
+  const selectedPdfCount = selectedPdfIdList.length;
+
+  // CSV取り込みを PDF 選択なしでも許可（送信時にPDF未選択なら警告）
+  const canUploadCsv = senderMissingFields.length === 0 && productContextFilled;
+
+  // リード一覧取得
+  const fetchLeads = useCallback(async (page = 1) => {
+    setLeadsLoading(true);
+    try {
+      const res = await fetch(`/api/leads?page=${page}&limit=100`);
+      if (!res.ok) throw new Error('リードの取得に失敗しました');
+      const data = await res.json();
+      const fetchedLeads: LeadRow[] = (data.leads || []).map((l: Record<string, unknown>) => ({
+        id: String(l.id),
+        companyName: String(l.company_name ?? ''),
+        homepageUrl: String(l.homepage_url ?? ''),
+        sendStatus: l.send_status as 'pending' | 'success' | 'failed',
+        intentScore: l.intentScore as number | null,
+        isAppointed: Boolean(l.is_appointed),
+        isNg: Boolean(l.is_ng),
+        contactName: String(l.contact_name ?? ''),
+        department: String(l.department ?? ''),
+        title: String(l.title ?? ''),
+        email: String(l.email ?? ''),
+        importFileName: String(l.import_file_name ?? ''),
+      }));
+      setLeads(fetchedLeads);
+      setLeadsPage(data.page || 1);
+      setLeadsTotalPages(data.totalPages || 1);
+    } catch (err) {
+      console.error('[fetchLeads]', err);
+      showToast('リードの取得に失敗しました', 'error');
+    } finally {
+      setLeadsLoading(false);
+    }
+  }, [showToast]);
+
+  // 初回リード読み込み
+  useEffect(() => {
+    void fetchLeads(1);
+  }, [fetchLeads]);
+
+  const fetchPdfLibrary = useCallback(async () => {
+    setPdfLibraryLoading(true);
+    setPdfLibraryError(null);
+    try {
+      const res = await fetch('/api/pdf/list');
+      if (!res.ok) {
+        const message = await res
+          .text()
+          .catch(() => 'PDF一覧の取得に失敗しました。');
+        throw new Error(message);
+      }
+      const data = (await res.json().catch(() => ({}))) as {
+        pdfs?: Array<{
+          id: string;
+          filename?: string;
+          size_bytes?: number;
+          created_at?: string | null;
+        }>;
+      };
+      const next = (data.pdfs ?? []).map((pdf) => ({
+        id: String(pdf.id),
+        name: String(pdf.filename ?? 'PDF'),
+        size: Number(pdf.size_bytes ?? 0),
+        uploadedAt: String(pdf.created_at ?? ''),
+      }));
+      setPdfAssets(next);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'PDF一覧の取得に失敗しました。';
+      setPdfLibraryError(message);
+      setPdfAssets([]);
+      setLogs((prev) => [...prev, '⚠️ PDF一覧の取得に失敗しました。']);
+    } finally {
+      setPdfLibraryLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchPdfLibrary();
+  }, [fetchPdfLibrary]);
 
   const sendableCards = useMemo(
     () => cards.filter((card) => card.sendEnabled),
@@ -143,8 +392,169 @@ export default function AiCustomPage() {
     [sendableCards]
   );
 
+  const sendSummary = useMemo(() => {
+    const success = sendResults.filter((r) => r.status === 'success').length;
+    const failed = sendResults.filter((r) => r.status === 'failed').length;
+    return { total: sendResults.length, success, failed };
+  }, [sendResults]);
+
   const remainingCapacity = Math.max(0, MAX_COMPANY_ROWS - cards.length);
   const latestLog = logs.length > 0 ? logs[logs.length - 1] : null;
+
+  // AgGrid 列定義
+  const leadColumnDefs = useMemo<ColDef<LeadRow>[]>(() => [
+    {
+      headerCheckboxSelection: true,
+      checkboxSelection: true,
+      width: 50,
+      minWidth: 50,
+      pinned: 'left',
+      lockPosition: true,
+      suppressMovable: true,
+      filter:false,
+    },
+    {
+      field: 'importFileName',
+      headerName: 'インポートファイル',
+      editable: false,
+      minWidth: 180,
+    },
+    {
+      field: 'companyName',
+      headerName: '企業名',
+      editable: true,
+      minWidth: 150,
+      flex: 1,
+      rowDrag: true,
+    },
+    {
+      field: 'homepageUrl',
+      headerName: 'URL',
+      editable: false,
+      minWidth: 200,
+      flex: 1,
+    },
+    {
+      field: 'sendStatus',
+      headerName: '送信結果',
+      editable: false,
+      minWidth: 100,
+      cellRenderer: (params: { value: string }) => {
+        if (params.value === 'success') return '成功';
+        if (params.value === 'failed') return '失敗';
+        return '-';
+      },
+    },
+    {
+      field: 'intentScore',
+      headerName: 'インテント',
+      editable: false,
+      minWidth: 100,
+      cellRenderer: (params: { value: number | null }) => {
+        if (params.value === null) return '-';
+        if (params.value >= 90) return '高';
+        if (params.value >= 60) return '中';
+        if (params.value > 0) return '低';
+        return '未開封';
+      },
+    },
+    {
+      field: 'isAppointed',
+      headerName: 'アポ獲得',
+      editable: true,
+      minWidth: 90,
+      cellRenderer: 'agCheckboxCellRenderer',
+      cellEditor: 'agCheckboxCellEditor',
+    },
+    {
+      field: 'isNg',
+      headerName: 'NG企業',
+      editable: true,
+      minWidth: 90,
+      cellRenderer: 'agCheckboxCellRenderer',
+      cellEditor: 'agCheckboxCellEditor',
+    },
+    {
+      field: 'contactName',
+      headerName: '担当者名',
+      editable: true,
+      minWidth: 120,
+    },
+    {
+      field: 'department',
+      headerName: '部署名',
+      editable: true,
+      minWidth: 120,
+    },
+    {
+      field: 'title',
+      headerName: '役職名',
+      editable: true,
+      minWidth: 100,
+    },
+    {
+      field: 'email',
+      headerName: 'メールアドレス',
+      editable: true,
+      minWidth: 180,
+    },
+  ], []);
+
+  const defaultColDef = useMemo<ColDef>(() => ({
+    sortable: true,
+    filter: true,
+    resizable: true,
+  }), []);
+
+  const onGridReady = useCallback((params: GridReadyEvent) => {
+    gridApiRef.current = params.api;
+  }, []);
+
+  const onSelectionChanged = useCallback((event: SelectionChangedEvent) => {
+    const selectedNodes = event.api.getSelectedNodes();
+    const ids = new Set(selectedNodes.map((node) => node.data?.id as string).filter(Boolean));
+    setSelectedLeadIds(ids);
+  }, []);
+
+  const onCellValueChanged = useCallback(async (event: CellValueChangedEvent<LeadRow>) => {
+    const { data, colDef, newValue } = event;
+    if (!data?.id || !colDef.field) return;
+
+    const fieldMap: Record<string, string> = {
+      companyName: 'companyName',
+      contactName: 'contactName',
+      department: 'department',
+      title: 'title',
+      email: 'email',
+      isAppointed: 'isAppointed',
+      isNg: 'isNg',
+    };
+
+    const apiField = fieldMap[colDef.field];
+    if (!apiField) return;
+
+    try {
+      const res = await fetch(`/api/leads/${data.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [apiField]: newValue }),
+      });
+      if (!res.ok) throw new Error('更新失敗');
+    } catch {
+      showToast('更新に失敗しました', 'error');
+      void fetchLeads(leadsPage);
+    }
+  }, [fetchLeads, leadsPage, showToast]);
+
+  const onRowDragEnd = useCallback((event: RowDragEndEvent) => {
+    // 行順序はDBに保存しないため、フロントエンドのみで反映
+    console.debug('[rowDragEnd]', event);
+  }, []);
+
+  // リードCSVエクスポート
+  const handleExportLeadsCsv = useCallback(() => {
+    window.location.href = '/api/leads/export';
+  }, []);
 
   const enqueueGeneration = useCallback(
     (ids: string[], replace = false) => {
@@ -160,6 +570,15 @@ export default function AiCustomPage() {
 
   const clearQueue = useCallback(() => {
     setQueueState((prev) => ({ ...prev, pendingIds: [] }));
+  }, []);
+
+  const pushLog = useCallback((message: string) => {
+    setLogs((prev) => [...prev, message]);
+  }, []);
+
+  const resetSendResults = useCallback(() => {
+    setSendResults([]);
+    setLastSendFinishedAt(null);
   }, []);
 
   const handleSenderProfileChange = useCallback(
@@ -205,28 +624,10 @@ export default function AiCustomPage() {
     );
   }, []);
 
-  const handleAttachmentToggle = useCallback(
-    (cardId: string, pdfId: string, enabled: boolean) => {
-      setCards((prev) =>
-        prev.map((card) => {
-          if (card.id !== cardId) return card;
-          if (enabled) {
-            if (card.attachments[pdfId]) {
-              return card;
-            }
-            return {
-              ...card,
-              attachments: {
-                ...card.attachments,
-                [pdfId]: buildTrackingLink(cardId, pdfId),
-              },
-            };
-          }
-          const nextAttachments = { ...card.attachments };
-          delete nextAttachments[pdfId];
-          return { ...card, attachments: nextAttachments };
-        })
-      );
+  const handlePdfSelectionToggle = useCallback(
+    (pdfId: string, enabled: boolean) => {
+      // 1送信につきPDFは1つまで（チェック式だが挙動は単一選択）
+      setSelectedPdfIds(() => (enabled ? { [pdfId]: true } : {}));
     },
     []
   );
@@ -240,58 +641,6 @@ export default function AiCustomPage() {
     },
     []
   );
-
-  const handlePdfUpload = useCallback((files: FileList | null) => {
-    if (!files?.length) return;
-    let lastError: string | null = null;
-
-    setPdfAssets((prev) => {
-      let totalSize = prev.reduce((sum, asset) => sum + asset.size, 0);
-      const next = [...prev];
-
-      Array.from(files).forEach((file) => {
-        const lowerName = file.name.toLowerCase();
-        if (!lowerName.endsWith('.pdf')) {
-          lastError = 'PDFファイル（.pdf）のみアップロードできます。';
-          return;
-        }
-        if (file.size === 0) {
-          lastError = `${file.name} は空のファイルです。`;
-          return;
-        }
-        if (totalSize + file.size > MAX_PDF_STORAGE_BYTES) {
-          lastError = 'ご利用のPDFストレージ上限（50MB）を超えています。';
-          return;
-        }
-
-        next.push({
-          id: crypto.randomUUID(),
-          name: file.name,
-          size: file.size,
-          uploadedAt: Date.now(),
-        });
-        totalSize += file.size;
-      });
-
-      return next;
-    });
-
-    if (lastError) {
-      setLogs((prev) => [...prev, `PDFアップロードエラー: ${lastError}`]);
-    }
-  }, []);
-
-  const handlePdfRemove = useCallback((pdfId: string) => {
-    setPdfAssets((prev) => prev.filter((asset) => asset.id !== pdfId));
-    setCards((prev) =>
-      prev.map((card) => {
-        if (!card.attachments[pdfId]) return card;
-        const nextAttachments = { ...card.attachments };
-        delete nextAttachments[pdfId];
-        return { ...card, attachments: nextAttachments };
-      })
-    );
-  }, []);
 
   const handleManualCardAdd = useCallback(() => {
     setCards((prev) => [...prev, createEmptyCard()]);
@@ -308,8 +657,8 @@ export default function AiCustomPage() {
   }, [clearQueue]);
 
   const handleGenerateEntry = useCallback(
-    async (cardId: string) => {
-      const target = cards.find((card) => card.id === cardId);
+    async (cardId: string, snapshot?: CompanyCard) => {
+      const target = snapshot ?? cards.find((card) => card.id === cardId);
       if (!target) {
         throw new Error('対象のカードが見つかりませんでした。');
       }
@@ -334,16 +683,14 @@ export default function AiCustomPage() {
         )
       );
 
-      const baseUrl =
-        typeof window !== 'undefined' ? window.location.origin : '';
-      const attachments = Object.values(target.attachments).map((link) => ({
-        name:
-          pdfAssets.find((asset) => asset.id === link.pdfId)?.name ?? '添付資料',
-        url: `${baseUrl}${link.url}`,
-        token: link.token,
+      const attachments = selectedPdfIdList.map((pdfId, index) => ({
+        name: pdfAssets.find((asset) => asset.id === pdfId)?.name ?? '添付資料',
+        url: `{{PDF_LINK_${index + 1}}}`,
+        token: `PDF_LINK_${index + 1}`,
       }));
 
-      const response = await fetch('/api/ai/sales-copy', {
+      const controller = new AbortController();
+      const res = await fetch('/api/ai/sales-copy/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -362,13 +709,11 @@ export default function AiCustomPage() {
           language: 'ja',
           productContext,
         }),
+        signal: controller.signal,
       });
 
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok || payload?.success === false) {
-        const message =
-          (typeof payload?.message === 'string' && payload.message) ||
-          'AI生成に失敗しました。';
+      if (!res.ok || !res.body) {
+        const message = await res.text().catch(() => 'AI生成に失敗しました。');
         setCards((prev) =>
           prev.map((card) =>
             card.id === cardId
@@ -379,15 +724,49 @@ export default function AiCustomPage() {
         throw new Error(message);
       }
 
-      const message =
-        (typeof payload?.message === 'string' && payload.message.trim()) || '';
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let accumulated = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        accumulated += chunk;
+        const current = accumulated;
+        setCards((prev) =>
+          prev.map((card) =>
+            card.id === cardId
+              ? {
+                  ...card,
+                  generatedMessage: current,
+                  status: 'generating',
+                  errorMessage: undefined,
+                }
+              : card
+          )
+        );
+      }
+
+      const finalMessage = accumulated.trim();
+      if (!finalMessage) {
+        const message = 'AI生成に失敗しました。';
+        setCards((prev) =>
+          prev.map((card) =>
+            card.id === cardId
+              ? { ...card, status: 'error', errorMessage: message }
+              : card
+          )
+        );
+        throw new Error(message);
+      }
 
       setCards((prev) =>
         prev.map((card) =>
           card.id === cardId
             ? {
                 ...card,
-                generatedMessage: message,
+                generatedMessage: finalMessage,
                 status: 'ready',
                 errorMessage: undefined,
               }
@@ -396,10 +775,11 @@ export default function AiCustomPage() {
       );
       setLogs((prev) => [
         ...prev,
-        `✅ ${target.companyName || target.contactName || target.homepageUrl} の文面を生成 (${message.length}文字)`,
+        `✅ 文面を作成しました: ${target.companyName || target.contactName || target.homepageUrl}`,
       ]);
+      return finalMessage;
     },
-    [cards, pdfAssets, senderProfile, productContext]
+    [cards, pdfAssets, senderProfile, productContext, selectedPdfIdList]
   );
 
   useEffect(() => {
@@ -412,8 +792,9 @@ export default function AiCustomPage() {
       .catch((error) => {
         const message =
           error instanceof Error ? error.message : String(error ?? '不明なエラー');
-        setLogs((prev) => [...prev, `⚠️ ${message}`]);
-        setQueueState((prev) => ({ ...prev, error: message }));
+        console.debug('[ai-custom] generate failed', message);
+        setLogs((prev) => [...prev, '⚠️ 文面生成に失敗しました。']);
+        setQueueState((prev) => ({ ...prev, error: '文面生成に失敗しました。' }));
       })
       .finally(() => {
         setQueueState((prev) => ({
@@ -457,81 +838,269 @@ export default function AiCustomPage() {
     ]);
   }, [cards, enqueueGeneration]);
 
-  const handleSimulateSend = useCallback(async () => {
-    if (!sendableCards.length) {
-      setLogs((prev) => [...prev, '送信対象のカードがありません。']);
-      return;
-    }
-    setIsSending(true);
-    setLogs((prev) => [...prev, '🚀 一括送信モックを開始しました。']);
+  const sendOneCard = useCallback(
+    async (card: CompanyCard, origin: string) => {
+      const replaceAll = (text: string, from: string, to: string) =>
+        text.split(from).join(to);
 
-    try {
-      const payload: AiWorkflowRequest = {
-        sender: senderProfile,
-        entries: sendableCards.map((card) => ({
-          id: card.id,
-          homepageUrl: card.homepageUrl,
-          recipient: {
-            companyName: card.companyName,
-            contactName: card.contactName,
-            department: card.department,
-            title: card.title,
-            email: card.email,
-            homepageUrl: card.homepageUrl,
-          },
-          generatedMessage: card.generatedMessage,
-          sendEnabled: card.sendEnabled,
-          attachmentCount: Object.keys(card.attachments).length,
-        })),
+      const extractSubjectAndBody = (text: string) => {
+        const subjectMatch = text.match(/^件名\s*:\s*(.+)$/m);
+        const subject = subjectMatch?.[1]?.trim() || senderProfile.subject || '';
+        const bodyIndex = text.indexOf('本文:');
+        const body =
+          bodyIndex >= 0
+            ? text.slice(bodyIndex + '本文:'.length).trim()
+            : text.trim();
+        return { subject, body };
       };
 
-      const result = await simulateAiWorkflow(payload);
-      setLogs((prev) => [...prev, ...result.logs]);
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : '送信モックに失敗しました。';
-      setLogs((prev) => [...prev, `⚠️ ${message}`]);
-    } finally {
-      setIsSending(false);
-    }
-  }, [sendableCards, senderProfile]);
+      const sentAtIso = new Date().toISOString();
+      const linkEntries = selectedPdfIdList.map((pdfId, index) => {
+        const token = crypto.randomUUID();
+        const placeholder = `{{PDF_LINK_${index + 1}}}`;
+        const urlPath = `/pdf/${token}`;
+        const fullUrl = `${origin}${urlPath}`;
+        return { pdfId, token, placeholder, fullUrl };
+      });
 
-  const runAutoWorkflow = useCallback(
-    async (cardIds: string[]) => {
-      if (!autoSendEnabled || !cardIds.length) return;
-      if (autoRunStatus === 'running') return;
+      // 送信前に生成したURLを一時的にコンソールへ出力（検証用）
+      if (linkEntries.length > 0) {
+        console.log(
+          '[auto-send] generated PDF links',
+          linkEntries.map((e) => e.fullUrl)
+        );
+      }
 
-      setAutoRunStatus('running');
-      setAutoRunMessage('AI生成を開始します...');
-      setLogs((prev) => [...prev, '⚡ 自動送信モードを開始しました。']);
+      let messageWithLinks = card.generatedMessage;
+      for (const entry of linkEntries) {
+        messageWithLinks = replaceAll(
+          messageWithLinks,
+          entry.placeholder,
+          entry.fullUrl
+        );
+      }
+
+      const { subject, body } = extractSubjectAndBody(messageWithLinks);
+
+      const submitRes = await fetch('/api/auto-submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: card.homepageUrl,
+          company: senderProfile.companyName,
+          person: senderProfile.fullName,
+          name: senderProfile.fullName,
+          email: senderProfile.email,
+          phone: senderProfile.phone,
+          subject,
+          message: body,
+          debug: false,
+        }),
+      });
+
+      const submitJson = (await submitRes.json().catch(() => ({}))) as {
+        success?: boolean;
+        logs?: string[];
+        note?: string;
+      };
+
+      if (!submitRes.ok || !submitJson.success) {
+        console.debug('[auto-send] submit failed', {
+          url: card.homepageUrl,
+          status: submitRes.status,
+          note: submitJson.note,
+          logs: submitJson.logs,
+        });
+        return { ok: false, sentAtIso, trackingSaved: false };
+      }
+
+      // PDF選択ありの場合のみ、閲覧URLトークンを保存する
+      let trackingSaved = true;
+      if (linkEntries.length > 0) {
+        const sendLogPayload = {
+          logs: linkEntries.map((entry) => ({
+            pdf_id: entry.pdfId,
+            token: entry.token,
+            recipient_company_name: card.companyName,
+            recipient_homepage_url: card.homepageUrl,
+            recipient_email: card.email,
+            sent_at: sentAtIso,
+          })),
+        };
+
+        const saveRes = await fetch('/api/pdf/send-log', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(sendLogPayload),
+        });
+
+        if (!saveRes.ok) {
+          trackingSaved = false;
+          const errText = await saveRes.text().catch(() => '');
+          console.warn('[auto-send] failed to save send-log', errText);
+        }
+      }
+
+      return { ok: true, sentAtIso, trackingSaved };
+    },
+    [selectedPdfIdList, senderProfile]
+  );
+
+  const handleSimulateSend = useCallback(
+    async (overrideCards?: CompanyCard[]) => {
+      const targets = (overrideCards ?? sendableReadyCards).filter(
+        (card) => card.sendEnabled && card.status === 'ready'
+      );
+      if (!targets.length) {
+        pushLog('送信する企業がありません。');
+        return;
+      }
+
+      const origin =
+        typeof window !== 'undefined' ? window.location.origin : '';
+      if (!origin) {
+        pushLog('送信処理を開始できませんでした。');
+        return;
+      }
+
+      resetSendResults();
+      setIsSending(true);
+      pushLog(`送信を開始します（${targets.length}件）`);
 
       try {
-        for (const id of cardIds) {
-          const targetCard = cards.find((card) => card.id === id);
-          const label = targetCard?.companyName || targetCard?.contactName || id;
-          setAutoRunMessage(`AI生成中: ${label}`);
-          await handleGenerateEntry(id);
+        let successCount = 0;
+        let failedCount = 0;
+        let trackingFailedCount = 0;
+
+        for (const card of targets) {
+          const label = card.companyName || card.contactName || card.homepageUrl;
+          pushLog(`送信中: ${label}`);
+
+          const result = await sendOneCard(card, origin);
+          setSendResults((prev) => [
+            ...prev,
+            {
+              companyName: card.companyName || label,
+              homepageUrl: card.homepageUrl,
+              email: card.email,
+              status: result.ok ? 'success' : 'failed',
+              sentAtIso: result.sentAtIso,
+            },
+          ]);
+
+          if (result.ok) {
+            successCount += 1;
+            pushLog(`送信成功: ${label}`);
+            if (!result.trackingSaved) trackingFailedCount += 1;
+          } else {
+            failedCount += 1;
+            pushLog(`送信失敗: ${label}`);
+          }
         }
 
-        setAutoRunMessage('フォーム送信中...');
-        await handleSimulateSend();
+        setLastSendFinishedAt(new Date().toISOString());
+        pushLog(`送信が完了しました（成功 ${successCount} / 失敗 ${failedCount}）`);
+        if (trackingFailedCount > 0) {
+          pushLog('⚠️ 一部の企業で閲覧URLの記録に失敗しました。');
+        }
+      } catch {
+        pushLog('送信処理でエラーが発生しました。');
+      } finally {
+        setIsSending(false);
+      }
+    },
+    [pushLog, resetSendResults, sendOneCard, sendableReadyCards]
+  );
+
+  const runAutoWorkflow = useCallback(
+    async (cardSnapshots: CompanyCard[]) => {
+      if (!autoSendEnabled || !cardSnapshots.length) return;
+      if (autoRunStatus === 'running') return;
+
+      const origin =
+        typeof window !== 'undefined' ? window.location.origin : '';
+      if (!origin) {
+        pushLog('自動送信を開始できませんでした。');
+        return;
+      }
+
+      resetSendResults();
+      setAutoRunStatus('running');
+      setAutoRunMessage('自動送信を開始します...');
+      pushLog(`⚡ 自動送信を開始します（${cardSnapshots.length}件）`);
+
+      try {
+        let successCount = 0;
+        let failedCount = 0;
+        let trackingFailedCount = 0;
+
+        for (const snapshot of cardSnapshots) {
+          const label =
+            snapshot.companyName || snapshot.contactName || snapshot.homepageUrl;
+          setAutoRunMessage(`文面作成中: ${label}`);
+          const finalMessage = await handleGenerateEntry(snapshot.id, snapshot);
+
+          setAutoRunMessage(`送信中: ${label}`);
+          const sendCard: CompanyCard = {
+            ...snapshot,
+            generatedMessage: finalMessage,
+            status: 'ready',
+            sendEnabled: true,
+          };
+          const result = await sendOneCard(sendCard, origin);
+          setSendResults((prev) => [
+            ...prev,
+            {
+              companyName: sendCard.companyName || label,
+              homepageUrl: sendCard.homepageUrl,
+              email: sendCard.email,
+              status: result.ok ? 'success' : 'failed',
+              sentAtIso: result.sentAtIso,
+            },
+          ]);
+
+          if (result.ok) {
+            successCount += 1;
+            pushLog(`送信成功: ${label}`);
+            if (!result.trackingSaved) trackingFailedCount += 1;
+          } else {
+            failedCount += 1;
+            pushLog(`送信失敗: ${label}`);
+          }
+        }
+
+        setLastSendFinishedAt(new Date().toISOString());
+        pushLog(`送信が完了しました（成功 ${successCount} / 失敗 ${failedCount}）`);
+        if (trackingFailedCount > 0) {
+          pushLog('⚠️ 一部の企業で閲覧URLの記録に失敗しました。');
+        }
 
         setAutoRunStatus('done');
         setAutoRunMessage('自動送信が完了しました。');
-        setLogs((prev) => [...prev, '✅ 自動送信が完了しました。']);
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : '自動送信フローでエラーが発生しました。';
+      } catch {
         setAutoRunStatus('error');
-        setAutoRunMessage(message);
-        setLogs((prev) => [...prev, `⚠️ 自動送信エラー: ${message}`]);
+        setAutoRunMessage('自動送信でエラーが発生しました。');
+        pushLog('自動送信でエラーが発生しました。');
       }
     },
-    [autoSendEnabled, autoRunStatus, cards, handleGenerateEntry, handleSimulateSend]
+    [autoSendEnabled, autoRunStatus, handleGenerateEntry, pushLog, resetSendResults, sendOneCard]
   );
 
   const handleExcelUpload = useCallback(
     async (file: File) => {
+      if (!canUploadCsv) {
+        setUploadState((prev) => ({
+          ...prev,
+          error:
+            '先にステップ1「自社情報」・ステップ2「商品理解」を完了してください。',
+        }));
+        setLogs((prev) => [
+          ...prev,
+          '⚠️ 自社情報/商品理解が未完了のためCSVを読み込めません。',
+        ]);
+        return;
+      }
+
       setUploadState((prev) => ({
         ...prev,
         fileName: file.name,
@@ -549,41 +1118,87 @@ export default function AiCustomPage() {
           .map((row) => row.map((cell) => sanitize(cell)))
           .filter((row) => row.some((cell) => cell.length > 0));
 
-        const withUrl = dataRows.filter((row) => row[4]?.length > 0);
-        const truncated = withUrl.slice(0, MAX_COMPANY_ROWS);
+        // 新フォーマット: 1列目=企業名, 2列目=URL, 3列目=担当者名, 4列目=部署名, 5列目=役職名, 6列目=メールアドレス
+        const validRows: Array<{
+          companyName: string;
+          homepageUrl: string;
+          contactName: string;
+          department: string;
+          title: string;
+          email: string;
+        }> = [];
+        let skippedMissingRequired = 0;
 
-        const skippedMissingUrl = dataRows.length - withUrl.length;
-        const skippedByLimit = Math.max(withUrl.length - truncated.length, 0);
+        for (const row of dataRows) {
+          const companyName = (row[0] ?? '').trim();
+          const url = (row[1] ?? '').trim();
+          if (companyName.length > 0 && url.length > 0) {
+            validRows.push({
+              companyName,
+              homepageUrl: normalizeHomepageUrl(url),
+              contactName: (row[2] ?? '').trim(),
+              department: (row[3] ?? '').trim(),
+              title: (row[4] ?? '').trim(),
+              email: (row[5] ?? '').trim(),
+            });
+          } else {
+            skippedMissingRequired += 1;
+          }
+        }
 
-        const nextCards = truncated.map((row) => ({
-          ...createEmptyCard(),
-          companyName: deriveCompanyNameFromUrl(row[4] ?? ''),
-          contactName: row[0] ?? '',
-          department: row[1] ?? '',
-          title: row[2] ?? '',
-          email: row[3] ?? '',
-          homepageUrl: normalizeHomepageUrl(row[4] ?? ''),
-        }));
+        if (skippedMissingRequired > 0) {
+          showToast(
+            `${skippedMissingRequired}件の行をスキップしました（企業名 または URL が未入力）`,
+            'warning'
+          );
+        }
 
-        const newCardIds = nextCards.map((card) => card.id);
+        if (validRows.length === 0) {
+          throw new Error('有効なデータ行がありません。');
+        }
 
-        setCards(nextCards);
-        enqueueGeneration(newCardIds, true);
+        // APIにインポート（ファイル名も送信）
+        const importRes = await fetch('/api/leads', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ leads: validRows, fileName: file.name }),
+        });
+
+        const importData = await importRes.json();
+        if (!importRes.ok) {
+          throw new Error(importData.error || 'インポートに失敗しました');
+        }
+
         setUploadState({
           fileName: file.name,
-          importedCount: nextCards.length,
-          skippedCount: skippedMissingUrl + skippedByLimit,
+          importedCount: importData.imported || 0,
+          skippedCount: skippedMissingRequired + (importData.duplicates || 0),
           lastImportedAt: Date.now(),
         });
-        setLogs((prev) => [
-          ...prev,
-          `Excel読み込み: ${nextCards.length}件をカード化し、自動生成を開始しました。`,
-        ]);
 
-        if (autoSendEnabled) {
-          setTimeout(() => {
-            void runAutoWorkflow(newCardIds);
-          }, 0);
+        pushLog(`CSV読み込み: ${importData.imported}件をインポートしました（重複: ${importData.duplicates}件）`);
+
+        // リード一覧を再取得
+        await fetchLeads(1);
+
+        // 初回インポート（データが存在しなかった場合）は自動送信
+        if (importData.isFirstImport && autoSendEnabled) {
+          const first100 = leads.slice(0, 100);
+          if (first100.length > 0) {
+            // 初回は自動で最初の100件を生成・送信
+            const cardsToSend = first100.map((lead) => ({
+              ...createEmptyCard(),
+              companyName: lead.companyName,
+              contactName: lead.contactName,
+              department: lead.department,
+              title: lead.title,
+              email: lead.email,
+              homepageUrl: lead.homepageUrl,
+            }));
+            setTimeout(() => {
+              void runAutoWorkflow(cardsToSend);
+            }, 0);
+          }
         }
       } catch (error) {
         const message =
@@ -592,11 +1207,51 @@ export default function AiCustomPage() {
           ...prev,
           error: message,
         }));
-        setLogs((prev) => [...prev, `Excel読み込みエラー: ${message}`]);
+        console.debug('[ai-custom] excel upload failed', message);
+        pushLog('⚠️ Excel/CSVの読み込みに失敗しました。');
       }
     },
-    [autoSendEnabled, enqueueGeneration, runAutoWorkflow]
+    [autoSendEnabled, canUploadCsv, fetchLeads, leads, pushLog, runAutoWorkflow, showToast]
   );
+
+  // 選択したリードからカードを生成して送信
+  const handleSendSelectedLeads = useCallback(async () => {
+    if (selectedLeadIds.size === 0) {
+      showToast('送信する企業を選択してください', 'warning');
+      return;
+    }
+
+    if (selectedLeadIds.size > 100) {
+      showToast('一度に送信できるのは100件までです', 'warning');
+      return;
+    }
+
+    const selectedLeads = leads.filter((lead) => selectedLeadIds.has(lead.id));
+    
+    // カードを生成
+    const cardsToSend = selectedLeads.map((lead) => ({
+      ...createEmptyCard(),
+      companyName: lead.companyName,
+      contactName: lead.contactName,
+      department: lead.department,
+      title: lead.title,
+      email: lead.email,
+      homepageUrl: lead.homepageUrl,
+    }));
+
+    setCards(cardsToSend);
+    
+    if (autoSendEnabled) {
+      // 自動送信モード: 生成→送信を順次実行
+      setTimeout(() => {
+        void runAutoWorkflow(cardsToSend);
+      }, 0);
+    } else {
+      // 手動モード: 生成キューに追加
+      enqueueGeneration(cardsToSend.map((c) => c.id), true);
+      pushLog(`${cardsToSend.length}件のカードを生成キューに追加しました`);
+    }
+  }, [autoSendEnabled, enqueueGeneration, leads, pushLog, runAutoWorkflow, selectedLeadIds, showToast]);
 
   const handleFileInputChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
@@ -607,15 +1262,6 @@ export default function AiCustomPage() {
       event.target.value = '';
     },
     [handleExcelUpload]
-  );
-
-  const handlePdfInputChange = useCallback(
-    (event: ChangeEvent<HTMLInputElement>) => {
-      const files = event.target.files;
-      handlePdfUpload(files);
-      event.target.value = '';
-    },
-    [handlePdfUpload]
   );
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -635,12 +1281,13 @@ export default function AiCustomPage() {
       e.preventDefault();
       e.stopPropagation();
       setIsDragging(false);
+      if (!canUploadCsv) return;
       const file = e.dataTransfer.files?.[0];
       if (file) {
         void handleExcelUpload(file);
       }
     },
-    [handleExcelUpload]
+    [handleExcelUpload, canUploadCsv]
   );
 
   const downloadSampleCsv = useCallback((e: React.MouseEvent) => {
@@ -654,9 +1301,73 @@ export default function AiCustomPage() {
     document.body.removeChild(link);
   }, []);
 
+  const downloadSendResultsCsv = useCallback(
+    (kind: 'success' | 'failed' | 'all') => {
+      const rows =
+        kind === 'all'
+          ? sendResults
+          : sendResults.filter((r) => r.status === kind);
+      if (rows.length === 0) return;
+
+      const escape = (value: string) =>
+        `"${String(value ?? '').replaceAll('"', '""')}"`;
+      const header = ['結果', '会社名', 'URL', 'メール', '送信日時'];
+      const lines = rows.map((r) =>
+        [
+          r.status === 'success' ? '成功' : '失敗',
+          r.companyName,
+          r.homepageUrl,
+          r.email,
+          new Date(r.sentAtIso).toLocaleString('ja-JP'),
+        ]
+          .map(escape)
+          .join(',')
+      );
+
+      const bom = '\uFEFF';
+      const csv = `${bom}${header.join(',')}\n${lines.join('\n')}\n`;
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const ts = new Date().toISOString().replaceAll(':', '-');
+      const kindLabel =
+        kind === 'success' ? '成功' : kind === 'failed' ? '失敗' : '全件';
+      a.download = `送信結果_${kindLabel}_${ts}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    },
+    [sendResults]
+  );
+
   return (
     <div className="min-h-screen bg-background text-foreground pb-20 md:pl-64">
       <AppSidebar />
+
+      {/* トースト通知 */}
+      {toastMessage && (
+        <div className="fixed top-4 right-4 z-50 animate-in slide-in-from-top-2 fade-in duration-300">
+          <div
+            className={`flex items-center gap-3 rounded-xl border px-4 py-3 shadow-lg backdrop-blur-sm ${
+              toastType === 'error'
+                ? 'border-rose-200 bg-rose-50/90 text-rose-700 dark:border-rose-800 dark:bg-rose-900/90 dark:text-rose-300'
+                : toastType === 'warning'
+                ? 'border-amber-200 bg-amber-50/90 text-amber-700 dark:border-amber-800 dark:bg-amber-900/90 dark:text-amber-300'
+                : 'border-emerald-200 bg-emerald-50/90 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-900/90 dark:text-emerald-300'
+            }`}
+          >
+            <span className="text-sm font-medium">{toastMessage}</span>
+            <button
+              onClick={() => setToastMessage(null)}
+              className="ml-2 text-current opacity-60 hover:opacity-100"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
       
       <main className="mx-auto flex w-full max-w-5xl flex-col gap-10 px-6 py-10">
         <header className="space-y-4">
@@ -818,20 +1529,120 @@ export default function AiCustomPage() {
         </section>
 
         <section className="card-clean p-8">
+          <SectionHeader
+            number="03"
+            title="添付するPDF（商品資料）を選択"
+            description="※ 1送信につき1つまで選択できます。選択したPDFは送信時に企業ごとの専用URLに自動変換され、本文に添付リンクとして差し込まれます。PDFの追加/削除はPDF管理で行います。"
+          />
+
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-xs text-muted-foreground">
+              選択した資料は送信時に自動で専用URLへ変換され、本文にリンクとして差し込まれます。
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void fetchPdfLibrary()}
+                className="btn-secondary text-xs"
+                disabled={pdfLibraryLoading}
+              >
+                {pdfLibraryLoading ? '更新中...' : '再読み込み'}
+              </button>
+              <Link href="/pdf-assets" className="btn-primary text-xs">
+                PDF管理へ
+              </Link>
+            </div>
+          </div>
+
+          {pdfLibraryError && (
+            <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+              {pdfLibraryError}
+            </div>
+          )}
+
+          {pdfAssets.length === 0 && !pdfLibraryLoading ? (
+            <div className="mt-6 rounded-xl border border-dashed border-border bg-muted/10 p-8 text-center">
+              <p className="text-sm text-muted-foreground">
+                まだPDFが登録されていません。先にPDF管理画面で商品資料を追加してください。
+              </p>
+              <div className="mt-4 flex justify-center">
+                <Link href="/pdf-assets" className="btn-primary">
+                  PDFを追加する
+                </Link>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {pdfAssets.map((pdf) => {
+                const isSelected = Boolean(selectedPdfIds[pdf.id]);
+                const placeholderIndex = selectedPdfIdList.indexOf(pdf.id);
+                const placeholder =
+                  placeholderIndex >= 0
+                    ? `{{PDF_LINK_${placeholderIndex + 1}}}`
+                    : '';
+
+                return (
+                  <div
+                    key={pdf.id}
+                    className="rounded-xl border border-border bg-card p-4 shadow-sm"
+                  >
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                        checked={isSelected}
+                        onChange={(event) =>
+                          handlePdfSelectionToggle(
+                            pdf.id,
+                            event.target.checked
+                          )
+                        }
+                      />
+                      <span
+                        className="text-sm font-medium text-foreground truncate"
+                        title={pdf.name}
+                      >
+                        {pdf.name}
+                      </span>
+                    </label>
+
+                    <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
+                      <span>{formatBytes(pdf.size)}</span>
+                      <span>
+                        {pdf.uploadedAt
+                          ? new Date(pdf.uploadedAt).toLocaleString('ja-JP')
+                          : '-'}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        <section className="card-clean p-8">
           <div className="flex items-center justify-between mb-6">
-            <SectionHeader number="03" title="Excel / CSV 取り込み" />
+            <SectionHeader number="04" title="Excel / CSV 取り込み" />
             <button
               type="button"
               onClick={handleManualCardAdd}
               className="btn-secondary text-xs"
+              disabled={!canUploadCsv}
             >
               + カードを手動追加
             </button>
           </div>
 
+          {!canUploadCsv && (
+            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+              先にステップ1「自社情報」とステップ2「商品理解」を完了すると、CSV取り込みが有効になります。
+            </div>
+          )}
+
           <div className="mt-2 mb-6 rounded-lg bg-blue-50/50 border border-blue-100 p-4 text-sm text-blue-700">
             <p className="font-semibold mb-1">フォーマット仕様</p>
-            <p>1列目: 担当者名 / 2列目: 部署 / 3列目: 役職 / 4列目: メール / 5列目: ホームページURL（必須）</p>
+            <p>1列目: 企業名（必須）/ 2列目: URL（必須）/ 3列目: 担当者名 / 4列目: 部署名 / 5列目: 役職名 / 6列目: メールアドレス</p>
           </div>
 
         <div className="mb-6 rounded-xl border border-border bg-muted/20 p-4">
@@ -857,6 +1668,7 @@ export default function AiCustomPage() {
             type="button"
             onClick={downloadSampleCsv}
             className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:text-primary/80 hover:underline"
+            disabled={!canUploadCsv}
           >
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path
@@ -877,12 +1689,15 @@ export default function AiCustomPage() {
           className={`dropzone group relative flex cursor-pointer flex-col items-center justify-center rounded-xl px-4 py-10 text-center ${
             isDragging ? 'is-active' : ''
           }`}
+          aria-disabled={!canUploadCsv}
+          style={!canUploadCsv ? { opacity: 0.5, pointerEvents: 'none' } : undefined}
         >
             <input
               type="file"
               accept=".xlsx,.xls,.csv"
               onChange={handleFileInputChange}
               className="sr-only"
+              disabled={!canUploadCsv}
             />
           <div
             className={`flex h-12 w-12 items-center justify-center rounded-full mb-3 transition-colors ${
@@ -939,57 +1754,108 @@ export default function AiCustomPage() {
           </div>
         </section>
 
+        {/* AgGrid リード管理 */}
         <section className="card-clean p-8">
-          <div className="flex items-center justify-between mb-4">
-            <SectionHeader number="04" title="PDFライブラリ" />
-            <label className="btn-primary cursor-pointer">
-              PDFを追加
-              <input
-                type="file"
-                accept=".pdf"
-                className="sr-only"
-                multiple
-                onChange={handlePdfInputChange}
-              />
-            </label>
+          <div className="flex items-center justify-between mb-6">
+            <SectionHeader 
+              number="05" 
+              title="リード管理" 
+              description="インポートしたリードを管理します。送信したい行を選択して「選択行を送信」ボタンを押してください。"
+            />
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={handleExportLeadsCsv}
+                className="btn-secondary text-xs"
+                disabled={leads.length === 0}
+              >
+                CSVエクスポート
+              </button>
+              <button
+                type="button"
+                onClick={() => void fetchLeads(leadsPage)}
+                className="btn-secondary text-xs"
+                disabled={leadsLoading}
+              >
+                {leadsLoading ? '読込中...' : '再読み込み'}
+              </button>
+            </div>
           </div>
 
-          {pdfAssets.length === 0 ? (
-            <p className="text-sm text-muted-foreground bg-muted/30 p-4 rounded-lg text-center">
-              まだPDFが登録されていません。
-            </p>
-          ) : (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 mt-6">
-              {pdfAssets.map((pdf) => (
-                <div key={pdf.id} className="group relative flex flex-col justify-between rounded-xl border border-border bg-card p-4 shadow-sm transition-all hover:shadow-md">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <div className="h-8 w-8 flex-shrink-0 rounded bg-rose-100 text-rose-500 flex items-center justify-center">
-                        <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.627 0-12 5.373-12 12s5.373 12 12 12 12-5.373 12-12-5.373-12-12-12zm-1 17v-1h2v1h-2zm0-12v10h2v-10h-2z" fillOpacity="0" /><path d="M7 6h10v12h-10z" fill="none" /><path d="M11.25 2h1.5v1.5h-1.5z" fillOpacity="0" /><path d="M19.5 3h-15c-1.103 0-2 .897-2 2v14c0 1.103.897 2 2 2h15c1.103 0 2-.897 2-2v-14c0-1.103-.897-2-2-2zm-3 14h-9v-10h9v10z" opacity=".5" /><path d="M7 6h10v10h-10z" fillOpacity=".2" /></svg>
-                        <span className="text-xs font-bold">PDF</span>
-                  </div>
-                      <p className="text-sm font-medium text-foreground truncate max-w-[140px]" title={pdf.name}>{pdf.name}</p>
-                    </div>
-                  </div>
-                  <div className="mt-3 flex items-end justify-between">
-                    <span className="text-xs text-muted-foreground">{formatBytes(pdf.size)}</span>
+          <div
+            className="rounded-lg border border-border overflow-hidden"
+            style={{ height: 500, width: '100%' }}
+          >
+            <AgGridReact<LeadRow>
+              theme={agGridTheme}
+              rowData={leads}
+              columnDefs={leadColumnDefs}
+              defaultColDef={defaultColDef}
+              rowSelection="multiple"
+              suppressRowClickSelection={true}
+              rowDragManaged={true}
+              animateRows={true}
+              pagination={true}
+              paginationPageSize={100}
+              onGridReady={onGridReady}
+              onSelectionChanged={onSelectionChanged}
+              onCellValueChanged={onCellValueChanged}
+              onRowDragEnd={onRowDragEnd}
+              getRowId={(params) => params.data.id}
+              overlayNoRowsTemplate="リードがありません。CSVをインポートしてください。"
+            />
+          </div>
+
+          <div className="mt-4 flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <span className="text-sm text-muted-foreground">
+                選択中: <span className="font-bold text-primary">{selectedLeadIds.size}</span> 件
+              </span>
+              <span className="text-sm text-muted-foreground">
+                全 {leads.length} 件
+              </span>
+            </div>
+
+            <div className="flex items-center gap-3">
+              {leadsTotalPages > 1 && (
+                <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => handlePdfRemove(pdf.id)}
-                      className="text-xs text-rose-500 hover:text-rose-700 hover:underline"
+                    onClick={() => void fetchLeads(leadsPage - 1)}
+                    disabled={leadsPage <= 1 || leadsLoading}
+                    className="btn-secondary text-xs"
                   >
-                    削除
+                    前へ
                   </button>
-                  </div>
+                  <span className="text-sm text-muted-foreground">
+                    {leadsPage} / {leadsTotalPages}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void fetchLeads(leadsPage + 1)}
+                    disabled={leadsPage >= leadsTotalPages || leadsLoading}
+                    className="btn-secondary text-xs"
+                  >
+                    次へ
+                  </button>
                 </div>
-              ))}
+              )}
+
+              <button
+                type="button"
+                onClick={() => void handleSendSelectedLeads()}
+                disabled={selectedLeadIds.size === 0 || isSending}
+                className="btn-primary"
+              >
+                {isSending ? '送信中...' : `選択行を送信（${selectedLeadIds.size}件）`}
+              </button>
             </div>
-          )}
+          </div>
         </section>
 
         <section className="space-y-4">
           <div className="flex items-center justify-between px-2">
-            <SectionHeader number="05" title="企業カード一覧" />
+            <SectionHeader number="06" title="企業カード一覧" />
             <p className="text-sm font-medium text-muted-foreground">
               <span className="text-primary font-bold">{sendableReadyCards.length}</span> / {sendableCards.length} 社 OK
             </p>
@@ -1006,9 +1872,9 @@ export default function AiCustomPage() {
                     key={card.id}
                   card={card}
                   pdfAssets={pdfAssets}
+                  selectedPdfIdList={selectedPdfIdList}
                   handleCardFieldChange={handleCardFieldChange}
                   handleToggleSendEnabled={handleToggleSendEnabled}
-                  handleAttachmentToggle={handleAttachmentToggle}
                   handleMessageChange={handleMessageChange}
                   handleGenerateEntry={handleGenerateEntry}
                 />
@@ -1020,7 +1886,7 @@ export default function AiCustomPage() {
         <section className="grid gap-6 lg:grid-cols-2">
           <div className="card-clean p-6">
             <div className="flex items-center justify-between mb-4">
-              <SectionHeader number="06" title="自動生成キュー" />
+              <SectionHeader number="07" title="自動生成キュー" />
               <span className="text-xs font-medium bg-muted px-2 py-1 rounded text-muted-foreground">
                 {queueState.pendingIds.length} pending
               </span>
@@ -1040,7 +1906,7 @@ export default function AiCustomPage() {
                 </div>
                 {queueState.error && (
                   <div className="mt-2 pt-2 border-t border-border/50 text-rose-500 text-xs">
-                    Error: {queueState.error}
+                    {queueState.error}
                       </div>
                     )}
               </div>
@@ -1056,12 +1922,58 @@ export default function AiCustomPage() {
 
               <button
                 type="button"
-                onClick={handleSimulateSend}
-                disabled={isSending || sendableCards.length === 0}
+                onClick={() => void handleSimulateSend()}
+                disabled={isSending || sendableReadyCards.length === 0}
                 className="btn-primary w-full mt-2"
               >
-                {isSending ? '送信中...' : 'チェック済み企業へ一括送信 (モック)'}
+                {isSending ? '送信中...' : 'チェック済み企業へ一括送信'}
               </button>
+
+              {sendSummary.total > 0 && (
+                <div className="mt-4 rounded-xl border border-border bg-muted/20 p-4">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-semibold text-foreground">送信結果</p>
+                    {lastSendFinishedAt && (
+                      <p className="text-[10px] text-muted-foreground">
+                        完了: {new Date(lastSendFinishedAt).toLocaleString('ja-JP')}
+                      </p>
+                    )}
+                  </div>
+                  <div className="mt-2 flex items-center gap-4 text-xs">
+                    <span className="font-semibold text-emerald-400">
+                      成功 {sendSummary.success}
+                    </span>
+                    <span className="font-semibold text-rose-400">
+                      失敗 {sendSummary.failed}
+                    </span>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className="btn-secondary text-xs"
+                      onClick={() => downloadSendResultsCsv('success')}
+                      disabled={sendSummary.success === 0}
+                    >
+                      成功CSV
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary text-xs"
+                      onClick={() => downloadSendResultsCsv('failed')}
+                      disabled={sendSummary.failed === 0}
+                    >
+                      失敗CSV
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary text-xs"
+                      onClick={() => downloadSendResultsCsv('all')}
+                    >
+                      全件CSV
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -1072,16 +1984,28 @@ export default function AiCustomPage() {
                 クリア
               </button>
             </div>
-            <div className="flex-1 overflow-y-auto space-y-2 pr-2">
-              {logs.length === 0 ? (
-                <p className="text-xs text-muted-foreground text-center py-8">ログはありません</p>
-              ) : (
-                logs.map((log, i) => (
-                  <div key={i} className="text-xs p-2 rounded bg-muted/50 text-foreground font-mono break-all">
-                    {log}
-                  </div>
-                ))
-              )}
+            <div className="relative flex-1 overflow-hidden rounded-xl border border-border bg-muted/10">
+              <Conversation className="h-full">
+                <ConversationContent>
+                  {logs.length === 0 ? (
+                    <ConversationEmptyState
+                      title="ログはありません"
+                      description="処理を開始するとここに実行ログが表示されます"
+                    />
+                  ) : (
+                    logs.map((log, i) => (
+                      <Message from="assistant" key={`${i}-${log}`}>
+                        <MessageContent className="w-full">
+                          <div className="text-xs text-foreground whitespace-pre-wrap break-words">
+                            {log}
+                          </div>
+                        </MessageContent>
+                      </Message>
+                    ))
+                  )}
+                </ConversationContent>
+                <ConversationScrollButton />
+              </Conversation>
             </div>
           </div>
         </section>
@@ -1109,20 +2033,32 @@ function SectionHeader({ number, title, description }: { number: string; title: 
 function CardItem({
   card,
   pdfAssets,
+  selectedPdfIdList,
   handleCardFieldChange,
   handleToggleSendEnabled,
-  handleAttachmentToggle,
   handleMessageChange,
   handleGenerateEntry
 }: {
   card: CompanyCard;
   pdfAssets: PdfAsset[];
+  selectedPdfIdList: string[];
   handleCardFieldChange: (cardId: string, field: CompanyCardField, value: string) => void;
   handleToggleSendEnabled: (cardId: string) => void;
-  handleAttachmentToggle: (cardId: string, pdfId: string, enabled: boolean) => void;
   handleMessageChange: (cardId: string, value: string) => void;
-  handleGenerateEntry: (cardId: string) => Promise<void>;
+  handleGenerateEntry: (cardId: string, snapshot?: CompanyCard) => Promise<string>;
 }) {
+  const messageRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // 生成中はスクロールを末尾に追従させる
+  useEffect(() => {
+    if (card.status !== 'generating' && card.status !== 'ready') return;
+    const el = messageRef.current;
+    if (!el) return;
+    requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight;
+    });
+  }, [card.generatedMessage, card.status]);
+
   return (
     <div className={`card-clean p-6 transition-all ${card.status === 'generating' ? 'ring-2 ring-primary/20' : ''}`}>
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border/50 pb-4 mb-4">
@@ -1153,7 +2089,7 @@ function CardItem({
 
         <button
           type="button"
-          onClick={() => void handleGenerateEntry(card.id)}
+          onClick={() => void handleGenerateEntry(card.id, card)}
           disabled={card.status === 'generating'}
           className="btn-secondary text-xs py-1.5 h-8"
         >
@@ -1200,6 +2136,7 @@ function CardItem({
           <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">生成コンテンツ</h4>
           <div className="relative">
             <textarea
+              ref={messageRef}
               value={card.generatedMessage}
               onChange={(event) => handleMessageChange(card.id, event.target.value)}
               rows={8}
@@ -1209,36 +2146,44 @@ function CardItem({
             />
             {card.status === 'generating' && (
               <div className="absolute inset-0 flex items-center justify-center bg-white/50 backdrop-blur-[1px] rounded-xl">
-                <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-full shadow-lg border border-border">
-                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                  <span className="text-xs font-medium text-foreground">Thinking...</span>
-                </div>
+                <span className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
               </div>
             )}
           </div>
         </div>
                     </div>
 
-      {/* Attachments */}
-                    {pdfAssets.length > 0 && (
+      {/* Attachments (placeholders) */}
+      {selectedPdfIdList.length > 0 && (
         <div className="mt-6 pt-4 border-t border-border/50">
-          <p className="text-xs font-medium text-muted-foreground mb-3">添付資料を選択</p>
-          <div className="flex flex-wrap gap-3">
-                          {pdfAssets.map((pdf) => (
-              <label key={pdf.id} className="inline-flex items-center gap-2 cursor-pointer select-none p-1.5 rounded-lg hover:bg-muted/50 transition-colors">
-                              <input
-                                type="checkbox"
-                                checked={Boolean(card.attachments[pdf.id])}
-                  onChange={(event) => handleAttachmentToggle(card.id, pdf.id, event.target.checked)}
-                                disabled={card.status === 'generating'}
-                  className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
-                              />
-                <span className="text-sm text-foreground">{pdf.name}</span>
-                            </label>
-                          ))}
-                        </div>
-                      </div>
-                    )}
+          <p className="text-xs font-medium text-muted-foreground mb-3">
+            添付資料（送信時に企業別URLへ置換）
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {selectedPdfIdList.map((pdfId, index) => {
+              const pdfName =
+                pdfAssets.find((asset) => asset.id === pdfId)?.name ?? '添付資料';
+              const placeholder = `{{PDF_LINK_${index + 1}}}`;
+              return (
+                <div
+                  key={pdfId}
+                  className="rounded-xl border border-border bg-muted/30 p-4"
+                >
+                  <p
+                    className="text-sm font-medium text-foreground truncate"
+                    title={pdfName}
+                  >
+                    {pdfName}
+                  </p>
+                  <code className="mt-2 block break-all rounded bg-black/20 px-2 py-1 text-xs font-mono text-muted-foreground">
+                    {placeholder}
+                  </code>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {card.errorMessage && (
         <div className="mt-4 p-3 bg-rose-50 border border-rose-100 rounded-lg text-xs text-rose-600">
@@ -1386,7 +2331,6 @@ function createEmptyCard(): CompanyCard {
     generatedMessage: '',
     status: 'pending',
     sendEnabled: true,
-    attachments: {},
   };
 }
 
@@ -1415,7 +2359,38 @@ function normalizeHomepageUrl(value: string): string {
 
 async function readSheetRows(file: File): Promise<string[][]> {
   const buffer = await file.arrayBuffer();
-  const workbook = read(buffer, { type: 'array' });
+  const isCSV = file.name.toLowerCase().endsWith('.csv');
+
+  // CSVの場合はエンコーディングを自動検出
+  if (isCSV) {
+    // まずUTF-8で試す
+    let text = new TextDecoder('utf-8').decode(buffer);
+    
+    // 文字化けの兆候があればShift-JISで再デコード
+    if (text.includes('�') || /[\x80-\x9F]/.test(text)) {
+      try {
+        text = new TextDecoder('shift-jis').decode(buffer);
+      } catch {
+        // shift-jisがサポートされていない場合はUTF-8のまま
+      }
+    }
+
+    // CSVをパース
+    const workbook = read(text, { type: 'string' });
+    const firstSheetName = workbook.SheetNames[0];
+    if (!firstSheetName) {
+      throw new Error('シートが見つかりません。');
+    }
+    const sheet = workbook.Sheets[firstSheetName];
+    const rows = utils.sheet_to_json<string[]>(sheet, {
+      header: 1,
+      defval: '',
+    }) as string[][];
+    return rows;
+  }
+
+  // Excel (.xlsx, .xls) の場合
+  const workbook = read(buffer, { type: 'array', codepage: 932 });
   const firstSheetName = workbook.SheetNames[0];
   if (!firstSheetName) {
     throw new Error('シートが見つかりません。');
@@ -1432,15 +2407,6 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function buildTrackingLink(cardId: string, pdfId: string): TrackingLink {
-  const token = `${cardId}-${pdfId}-${crypto.randomUUID()}`;
-  return {
-    pdfId,
-    token,
-    url: `/pdf/${token}`,
-  };
 }
 
 function removeFromQueue(queue: string[], target: string): string[] {

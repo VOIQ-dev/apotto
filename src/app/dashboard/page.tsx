@@ -24,8 +24,8 @@ import {
   YAxis,
 } from 'recharts';
 
-import { createSupabaseBrowserClient } from '@/lib/supabase';
 import { AppSidebar } from '@/components/AppSidebar';
+import { Tooltip as MantineTooltip } from '@mantine/core';
 
 type RangeFilter = '7d' | '30d' | '90d';
 
@@ -45,12 +45,43 @@ type DashboardData = {
   weekdayPeaks: Array<{ day: string; morning: number; afternoon: number; evening: number }>;
   industryEngagement: Array<{ industry: string; responseRate: number; avgScore: number }>;
   funnel: Array<{ stage: string; value: number; delta: number }>;
+  intentScores: Array<{
+    company: string;
+    contact?: string;
+    email?: string;
+    score: number;
+    lastViewedAt?: string;
+    pdf?: string;
+  }>;
+  options: {
+    pdfs: Array<{ id: string; name: string }>;
+    companies: string[];
+  };
 };
+
+type IntentScoreCategory = 'high' | 'medium' | 'low';
 
 type MetricsState = {
   loading: boolean;
   data: DashboardData;
   error?: string;
+};
+
+const emptyDashboardData: DashboardData = {
+  summary: [],
+  pdfPerformance: [],
+  companyEngagement: [],
+  timeline: [],
+  logs: [],
+  contentInsights: [],
+  weekdayPeaks: [],
+  industryEngagement: [],
+  funnel: [],
+  intentScores: [],
+  options: {
+    pdfs: [],
+    companies: [],
+  },
 };
 
 // const COLORS = ['#10b981', '#0ea5e9', '#8b5cf6', '#f59e0b', '#ef4444'];
@@ -67,6 +98,13 @@ type CustomTooltipProps = {
   label?: string;
 };
 
+const formatTooltipValue = (value: number | string) => {
+  if (typeof value === 'number') return value.toLocaleString('ja-JP');
+  const asNumber = Number(value);
+  if (Number.isFinite(asNumber)) return asNumber.toLocaleString('ja-JP');
+  return String(value ?? '');
+};
+
 // Custom Tooltip for Recharts
 const CustomTooltip = ({ active, payload, label }: CustomTooltipProps) => {
   if (active && payload && payload.length) {
@@ -76,7 +114,10 @@ const CustomTooltip = ({ active, payload, label }: CustomTooltipProps) => {
         {payload.map((entry: TooltipPayloadEntry, index: number) => (
           <p key={index} className="text-xs text-muted-foreground">
             <span style={{ color: entry.color }} className="mr-1">●</span>
-            {entry.name}: <span className="font-medium text-foreground">{entry.value}</span>
+            {entry.name}:{' '}
+            <span className="font-medium text-foreground">
+              {formatTooltipValue(entry.value)}
+            </span>
           </p>
         ))}
       </div>
@@ -94,12 +135,45 @@ export default function DashboardPage() {
   const metrics = useDashboardMetrics(filters);
 
   const pdfOptions = useMemo(
-    () => ['all', ...metrics.data.pdfPerformance.map((pdf) => pdf.id)],
-    [metrics.data.pdfPerformance]
+    () => ['all', ...metrics.data.options.pdfs.map((pdf) => pdf.id)],
+    [metrics.data.options.pdfs]
   );
   const companyOptions = useMemo(
-    () => ['all', ...metrics.data.companyEngagement.map((row) => row.company)],
-    [metrics.data.companyEngagement]
+    () => ['all', ...metrics.data.options.companies],
+    [metrics.data.options.companies]
+  );
+
+  const intentGrouped = useMemo(() => {
+    const category = (score: number): IntentScoreCategory =>
+      score >= 80 ? 'high' : score >= 50 ? 'medium' : 'low';
+    const groups: Record<IntentScoreCategory, DashboardData['intentScores']> = {
+      high: [],
+      medium: [],
+      low: [],
+    };
+    for (const row of metrics.data.intentScores) {
+      const cat = category(row.score ?? 0);
+      groups[cat].push(row);
+    }
+    // ソート: スコア降順
+    (Object.keys(groups) as IntentScoreCategory[]).forEach((k) => {
+      groups[k] = groups[k].slice().sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    });
+    return groups;
+  }, [metrics.data.intentScores]);
+
+  const tooltipFancy = useMemo(
+    () => ({
+      withinPortal: true,
+      withArrow: true,
+      openDelay: 120,
+      classNames: {
+        tooltip:
+          'rounded-xl border border-slate-200/80 bg-white/90 text-slate-900 shadow-xl backdrop-blur-sm dark:border-slate-700/70 dark:bg-slate-800/90 dark:text-slate-50',
+        arrow: 'text-white dark:text-slate-800',
+      },
+    }),
+    []
   );
 
   return (
@@ -138,7 +212,11 @@ export default function DashboardPage() {
               label="PDF資料"
               value={filters.pdfId}
               options={pdfOptions.map((id) => ({
-                label: id === 'all' ? 'すべての資料' : metrics.data.pdfPerformance.find((pdf) => pdf.id === id)?.name ?? id,
+                label:
+                  id === 'all'
+                    ? 'すべての資料'
+                    : metrics.data.options.pdfs.find((pdf) => pdf.id === id)?.name ??
+                      id,
                 value: id,
               }))}
               onChange={(value) => setFilters((prev) => ({ ...prev, pdfId: value }))}
@@ -197,7 +275,7 @@ export default function DashboardPage() {
               <h2 className="text-lg font-bold text-foreground">資料別の閲覧傾向</h2>
               <span className="text-xs font-medium text-muted-foreground bg-muted px-2 py-1 rounded-md">Top 5</span>
             </div>
-            <div className="flex-1 min-h-[300px]">
+            <div className="flex-1 min-h-[300px] min-w-0">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart
                   data={metrics.data.pdfPerformance}
@@ -231,7 +309,7 @@ export default function DashboardPage() {
               <h2 className="text-lg font-bold text-foreground">時間帯ごとの反応</h2>
               <span className="text-xs font-medium text-muted-foreground bg-muted px-2 py-1 rounded-md">Peak Time</span>
             </div>
-            <div className="flex-1 min-h-[300px]">
+            <div className="flex-1 min-h-[300px] min-w-0">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart
                   data={metrics.data.timeline}
@@ -261,7 +339,7 @@ export default function DashboardPage() {
               <h2 className="text-lg font-bold text-foreground">コンテンツ滞在時間 × 完読率</h2>
               <span className="text-xs font-medium text-muted-foreground bg-muted px-2 py-1 rounded-md">Engagement</span>
             </div>
-            <div className="flex-1 min-h-[320px]">
+            <div className="flex-1 min-h-[320px] min-w-0">
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={metrics.data.contentInsights} margin={{ top: 10, right: 20, bottom: 0, left: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
@@ -298,7 +376,7 @@ export default function DashboardPage() {
               <h2 className="text-lg font-bold text-foreground">曜日別 × 時間帯ピーク</h2>
               <span className="text-xs font-medium text-muted-foreground bg-muted px-2 py-1 rounded-md">Heatmap</span>
             </div>
-            <div className="flex-1 min-h-[320px]">
+            <div className="flex-1 min-h-[320px] min-w-0">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={metrics.data.weekdayPeaks} margin={{ top: 10, right: 20, left: -10, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
@@ -320,30 +398,46 @@ export default function DashboardPage() {
           {/* Company Engagement - Radar Chart */}
           <div className="card-clean flex flex-col">
             <h2 className="text-lg font-bold text-foreground mb-4">業界別エンゲージメント</h2>
-            <div className="flex-1 min-h-[320px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <RadarChart cx="50%" cy="50%" outerRadius="80%" data={metrics.data.industryEngagement}>
-                  <PolarGrid stroke="#334155" />
-                  <PolarAngleAxis dataKey="industry" stroke="#94a3b8" />
-                  <PolarRadiusAxis angle={30} domain={[0, 80]} stroke="#475569" tickFormatter={(value) => `${value}%`} />
-                  <Radar
-                    name="反応率"
-                    dataKey="responseRate"
-                    stroke="#10b981"
-                    fill="#10b981"
-                    fillOpacity={0.4}
-                  />
-                  <Radar
-                    name="AIマッチ度"
-                    dataKey="avgScore"
-                    stroke="#0ea5e9"
-                    fill="#0ea5e9"
-                    fillOpacity={0.2}
-                  />
-                  <Legend />
-                  <Tooltip content={<CustomTooltip />} />
-                </RadarChart>
-              </ResponsiveContainer>
+            <div className="flex-1 min-h-[320px] min-w-0">
+              {metrics.data.industryEngagement.length === 0 ? (
+                <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-border bg-muted/10 text-sm text-muted-foreground">
+                  業界別データはまだありません（今後追加予定）
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <RadarChart
+                    cx="50%"
+                    cy="50%"
+                    outerRadius="80%"
+                    data={metrics.data.industryEngagement}
+                  >
+                    <PolarGrid stroke="#334155" />
+                    <PolarAngleAxis dataKey="industry" stroke="#94a3b8" />
+                    <PolarRadiusAxis
+                      angle={30}
+                      domain={[0, 80]}
+                      stroke="#475569"
+                      tickFormatter={(value) => `${value}%`}
+                    />
+                    <Radar
+                      name="反応率"
+                      dataKey="responseRate"
+                      stroke="#10b981"
+                      fill="#10b981"
+                      fillOpacity={0.4}
+                    />
+                    <Radar
+                      name="AIマッチ度"
+                      dataKey="avgScore"
+                      stroke="#0ea5e9"
+                      fill="#0ea5e9"
+                      fillOpacity={0.2}
+                    />
+                    <Legend />
+                    <Tooltip content={<CustomTooltip />} />
+                  </RadarChart>
+                </ResponsiveContainer>
+              )}
             </div>
           </div>
 
@@ -413,6 +507,114 @@ export default function DashboardPage() {
             </div>
           </div>
         </section>
+
+        {/* Intent Scores */}
+        <section className="card-clean flex flex-col">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-lg font-bold text-foreground">インテントスコア</h2>
+              <p className="text-sm text-muted-foreground">
+                閲覧行動と開封までの時間から算出した関心度。High(24h以内), Medium(24–72h), Low(73h超/未開封)
+              </p>
+            </div>
+            <span className="text-xs font-medium text-muted-foreground bg-muted px-2 py-1 rounded-md">
+              {metrics.data.intentScores.length} 件
+            </span>
+          </div>
+          {metrics.data.intentScores.length === 0 ? (
+            <div className="flex h-full items-center justify-center text-sm text-muted-foreground py-10">
+              インテントスコアのデータがまだありません。
+            </div>
+          ) : (
+            <div className="grid gap-4">
+              {(
+                [
+                  { key: 'high', label: 'High (24h以内)', color: 'bg-emerald-500/15 text-emerald-400' },
+                  { key: 'medium', label: 'Medium (24–72h)', color: 'bg-amber-500/15 text-amber-500' },
+                  { key: 'low', label: 'Low (73h超・未開封)', color: 'bg-slate-500/15 text-slate-400' },
+                ] as Array<{ key: IntentScoreCategory; label: string; color: string }>
+              ).map((cat) => {
+                const rows = intentGrouped[cat.key];
+                return (
+                  <div key={cat.key} className="rounded-xl border border-border overflow-hidden">
+                    <div className={`flex items-center justify-between px-4 py-3 text-sm font-semibold ${cat.color}`}>
+                      <span>{cat.label}</span>
+                      <span className="text-xs">{rows.length}件</span>
+                    </div>
+                    {rows.length === 0 ? (
+                      <div className="px-4 py-6 text-sm text-muted-foreground">該当データはありません。</div>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-sm">
+                          <thead className="bg-muted/40 text-xs uppercase text-muted-foreground">
+                            <tr>
+                              <th className="px-4 py-3 font-medium">企業</th>
+                              <th className="px-4 py-3 font-medium">メール / 担当</th>
+                              <th className="px-4 py-3 font-medium">資料</th>
+                              <th className="px-4 py-3 font-medium text-right">スコア</th>
+                              <th className="px-4 py-3 font-medium text-right">最終閲覧</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-border/50">
+                            {rows.map((row, idx) => (
+                              <tr
+                                key={`${row.company}-${row.email ?? idx}`}
+                                className="hover:bg-muted/30 transition-colors"
+                              >
+                                <td className="px-4 py-3 text-foreground font-medium truncate max-w-[160px]">
+                                  <MantineTooltip label={row.company} {...tooltipFancy}>
+                                    <span className="cursor-help">{row.company}</span>
+                                  </MantineTooltip>
+                                </td>
+                                <td className="px-4 py-3 text-muted-foreground">
+                                  <MantineTooltip label={row.email || '-'} {...tooltipFancy}>
+                                    <div className="text-xs font-semibold text-foreground truncate max-w-[200px] cursor-help">
+                                      {row.email || '-'}
+                                    </div>
+                                  </MantineTooltip>
+                                  <MantineTooltip
+                                    label={row.contact || ''}
+                                    disabled={!row.contact}
+                                    {...tooltipFancy}
+                                  >
+                                    <div className="text-xs truncate max-w-[200px] cursor-help">
+                                      {row.contact || ''}
+                                    </div>
+                                  </MantineTooltip>
+                                </td>
+                                <td className="px-4 py-3 text-foreground truncate max-w-[160px]">
+                                  <MantineTooltip
+                                    label={row.pdf || '-'}
+                                    disabled={!row.pdf}
+                                    {...tooltipFancy}
+                                  >
+                                    <span className="cursor-help">{row.pdf || '-'}</span>
+                                  </MantineTooltip>
+                                </td>
+                                <td className="px-4 py-3 text-right font-semibold text-foreground tabular-nums">
+                                  {Math.round(row.score ?? 0)}
+                                </td>
+                                <td className="px-4 py-3 text-right text-xs text-muted-foreground whitespace-nowrap">
+                                  <MantineTooltip
+                                    label={row.lastViewedAt || '-'}
+                                    disabled={!row.lastViewedAt}
+                                    {...tooltipFancy}
+                                  >
+                                    <span className="cursor-help">{row.lastViewedAt || '-'}</span>
+                                  </MantineTooltip>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
       </main>
     </div>
   );
@@ -456,8 +658,8 @@ function FilterSelect({
 
 function useDashboardMetrics(filters: DashboardFilters): MetricsState {
   const [state, setState] = useState<MetricsState>(() => ({
-    loading: false,
-    data: buildMockData(filters),
+    loading: true,
+    data: emptyDashboardData,
   }));
 
   useEffect(() => {
@@ -466,13 +668,19 @@ function useDashboardMetrics(filters: DashboardFilters): MetricsState {
     async function fetchData() {
       setState((prev) => ({ ...prev, loading: true, error: undefined }));
       try {
-        const client = createSupabaseBrowserClient();
-        const { data, error } = await client.rpc('dashboard_metrics', {
+        const params = new URLSearchParams({
           range_label: filters.range,
-          pdf_id: filters.pdfId === 'all' ? null : filters.pdfId,
-          company_name: filters.company === 'all' ? null : filters.company,
+          ...(filters.pdfId === 'all' ? {} : { pdf_id: filters.pdfId }),
+          ...(filters.company === 'all' ? {} : { company_name: filters.company }),
         });
-        if (error) throw error;
+        const res = await fetch(`/api/dashboard/metrics?${params.toString()}`);
+        if (!res.ok) {
+          const message = await res
+            .text()
+            .catch(() => 'データ取得に失敗しました。');
+          throw new Error(message);
+        }
+        const data = await res.json();
         if (!active) return;
         setState({
           loading: false,
@@ -484,7 +692,7 @@ function useDashboardMetrics(filters: DashboardFilters): MetricsState {
           error instanceof Error ? error.message : 'データ取得に失敗しました。';
         setState({
           loading: false,
-          data: buildMockData(filters),
+          data: emptyDashboardData,
           error: message,
         });
       }
@@ -501,174 +709,54 @@ function useDashboardMetrics(filters: DashboardFilters): MetricsState {
 
 function normalizeDashboardData(raw: unknown, filters: DashboardFilters): DashboardData {
   if (!raw || typeof raw !== 'object') {
-    return buildMockData(filters);
+    return emptyDashboardData;
   }
   const snapshot = raw as Record<string, unknown>;
+  const optionsSnapshot = snapshot.options as
+    | { pdfs?: Array<{ id: string; name: string }>; companies?: string[] }
+    | undefined;
   return {
     summary: Array.isArray(snapshot.summary)
       ? (snapshot.summary as DashboardData['summary'])
-      : buildMockData(filters).summary,
+      : emptyDashboardData.summary,
     pdfPerformance: Array.isArray(snapshot.pdfPerformance)
       ? (snapshot.pdfPerformance as DashboardData['pdfPerformance'])
-      : buildMockData(filters).pdfPerformance,
+      : emptyDashboardData.pdfPerformance,
     companyEngagement: Array.isArray(snapshot.companyEngagement)
       ? (snapshot.companyEngagement as DashboardData['companyEngagement'])
-      : buildMockData(filters).companyEngagement,
+      : emptyDashboardData.companyEngagement,
     timeline: Array.isArray(snapshot.timeline)
       ? (snapshot.timeline as DashboardData['timeline'])
-      : buildMockData(filters).timeline,
+      : emptyDashboardData.timeline,
     logs: Array.isArray(snapshot.logs)
       ? (snapshot.logs as DashboardData['logs'])
-      : buildMockData(filters).logs,
+      : emptyDashboardData.logs,
     contentInsights: Array.isArray(snapshot.contentInsights)
       ? (snapshot.contentInsights as DashboardData['contentInsights'])
-      : buildMockData(filters).contentInsights,
+      : emptyDashboardData.contentInsights,
+    intentScores: Array.isArray(snapshot.intentScores)
+      ? (snapshot.intentScores as DashboardData['intentScores'])
+      : emptyDashboardData.intentScores,
     weekdayPeaks: Array.isArray(snapshot.weekdayPeaks)
       ? (snapshot.weekdayPeaks as DashboardData['weekdayPeaks'])
-      : buildMockData(filters).weekdayPeaks,
+      : emptyDashboardData.weekdayPeaks,
     industryEngagement: Array.isArray(snapshot.industryEngagement)
       ? (snapshot.industryEngagement as DashboardData['industryEngagement'])
-      : buildMockData(filters).industryEngagement,
+      : emptyDashboardData.industryEngagement,
     funnel: Array.isArray(snapshot.funnel)
       ? (snapshot.funnel as DashboardData['funnel'])
-      : buildMockData(filters).funnel,
-  };
-}
-
-function buildMockData(filters: DashboardFilters): DashboardData {
-  const multiplier =
-    filters.range === '90d' ? 1.6 : filters.range === '30d' ? 1.2 : 1;
-  const basePdf = [
-    {
-      id: 'pdf_overview',
-      name: 'プロダクト概要.pdf',
-      views: Math.round(420 * multiplier),
-      uniqueViews: Math.round(210 * multiplier),
-    },
-    {
-      id: 'pdf_case',
-      name: '導入事例集.pdf',
-      views: Math.round(310 * multiplier),
-      uniqueViews: Math.round(180 * multiplier),
-    },
-    {
-      id: 'pdf_pricing',
-      name: '料金プラン.pdf',
-      views: Math.round(240 * multiplier),
-      uniqueViews: Math.round(150 * multiplier),
-    },
-    {
-      id: 'pdf_security',
-      name: 'セキュリティ白書.pdf',
-      views: Math.round(180 * multiplier),
-      uniqueViews: Math.round(120 * multiplier),
-    },
-  ];
-
-  const companyEngagement = [
-    { company: 'A社 (SaaS)', rate: 62.4 },
-    { company: 'B社 (製造)', rate: 54.1 },
-    { company: 'C社 (通信)', rate: 38.2 },
-    { company: 'D社 (金融)', rate: 27.5 },
-    { company: 'E社 (小売)', rate: 18.9 }, // Added for Pie Chart
-  ];
-
-  const timeline = ['8-10時', '10-12時', '12-14時', '14-16時', '16-18時', '18-20時'].map((slot, index) => ({
-    slot,
-    views: Math.round((index + 1.2) * 20 * multiplier * (Math.random() * 0.5 + 0.8)),
-  }));
-
-  const logs = [
-    {
-      viewer: 'sales@alpha.co.jp',
-      company: 'αコンサル',
-      pdf: 'プロダクト概要.pdf',
-      viewedAt: '2025-11-17 09:24',
-    },
-    {
-      viewer: 'it@beta.jp',
-      company: 'βテック',
-      pdf: 'セキュリティ白書.pdf',
-      viewedAt: '2025-11-17 10:05',
-    },
-    {
-      viewer: 'cfo@gamma.com',
-      company: 'γホールディングス',
-      pdf: '料金プラン.pdf',
-      viewedAt: '2025-11-17 11:32',
-    },
-    {
-      viewer: 'biz@delta.io',
-      company: 'δイノベーション',
-      pdf: '導入事例集.pdf',
-      viewedAt: '2025-11-17 12:08',
-    },
-  ];
-
-  const referenceRate = companyEngagement[0]?.rate ?? 0;
-
-  const contentInsights = basePdf.map((pdf, index) => ({
-    name: pdf.name.replace('.pdf', ''),
-    avgTime: Math.round((45 + index * 15) * (filters.range === '90d' ? 1.1 : 1)),
-    completionRate: Math.min(95, Math.round(58 + index * 7)),
-  }));
-
-  const weekdayPeaks = [
-    { day: 'Mon', morning: 28, afternoon: 36, evening: 18 },
-    { day: 'Tue', morning: 32, afternoon: 42, evening: 22 },
-    { day: 'Wed', morning: 26, afternoon: 48, evening: 30 },
-    { day: 'Thu', morning: 24, afternoon: 34, evening: 28 },
-    { day: 'Fri', morning: 20, afternoon: 30, evening: 36 },
-  ];
-
-  const industryEngagement = [
-    { industry: 'SaaS', responseRate: 72, avgScore: 65 },
-    { industry: '製造', responseRate: 58, avgScore: 61 },
-    { industry: '通信', responseRate: 44, avgScore: 52 },
-    { industry: '金融', responseRate: 37, avgScore: 48 },
-    { industry: '小売', responseRate: 33, avgScore: 45 },
-  ];
-
-  const funnel = [
-    { stage: '送信完了', value: 100, delta: 3 },
-    { stage: '閲覧済み', value: 68, delta: 5 },
-    { stage: 'フォーム入力', value: 41, delta: -2 },
-    { stage: '成約', value: 18, delta: 1 },
-  ];
-
-  const summary = [
-    {
-      label: '総閲覧数',
-      value: `${basePdf.reduce((sum, pdf) => sum + pdf.views, 0)}回`,
-      helper: 'ユニーク閲覧の合計も含む',
-    },
-    {
-      label: 'ユニーク閲覧者',
-      value: `${basePdf.reduce((sum, pdf) => sum + pdf.uniqueViews, 0)}名`,
-      helper: 'メール認証済み',
-    },
-    {
-      label: '平均閲覧率',
-      value: `${(((referenceRate || 0) / 100) * 68).toFixed(1)}%`,
-      helper: '送信企業に対する閲覧割合',
-    },
-    {
-      label: '人気時間帯',
-      value: timeline.reduce((prev, curr) => (curr.views > prev.views ? curr : prev))
-        .slot,
-      helper: '閲覧が集中した時間帯',
-    },
-  ];
-
-  return {
-    summary,
-    pdfPerformance: basePdf,
-    companyEngagement,
-    timeline,
-    logs,
-    contentInsights,
-    weekdayPeaks,
-    industryEngagement,
-    funnel,
+      : emptyDashboardData.funnel,
+    options:
+      optionsSnapshot &&
+      Array.isArray(optionsSnapshot.pdfs) &&
+      Array.isArray(optionsSnapshot.companies)
+        ? {
+            pdfs: optionsSnapshot.pdfs.map((p) => ({
+              id: String(p.id),
+              name: String(p.name ?? 'PDF'),
+            })),
+            companies: optionsSnapshot.companies.map((c) => String(c)),
+          }
+        : emptyDashboardData.options,
   };
 }

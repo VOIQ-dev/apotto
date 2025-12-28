@@ -1,9 +1,12 @@
 'use client';
 
 import Link from 'next/link';
+import { useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
 
 export function AppSidebar() {
+  const [userName, setUserName] = useState<string>('');
+  const [userEmail, setUserEmail] = useState<string>('');
   const pathname = usePathname();
 
   const navItems = [
@@ -36,19 +39,36 @@ export function AppSidebar() {
     },
   ];
 
+  useEffect(() => {
+    // 画面左下に表示するユーザー情報を取得
+    // /api/account/me のレスポンスを想定（account.display_name / account.email）
+    const fetchUser = async () => {
+      try {
+        const res = await fetch('/api/account/me', { credentials: 'include' });
+        if (!res.ok) return;
+        const data = (await res.json().catch(() => ({}))) as {
+          account?: { display_name?: string | null; email?: string | null };
+        };
+        setUserName((data.account?.display_name ?? '').trim());
+        setUserEmail((data.account?.email ?? '').trim());
+      } catch {
+        // fail silently
+      }
+    };
+    void fetchUser();
+  }, []);
+
   return (
     <aside className="fixed left-0 top-0 z-40 h-screen w-64 border-r border-border/50 bg-background/95 backdrop-blur-xl transition-transform hidden md:block">
-      <div className="flex h-16 items-center border-b border-border/50 px-6">
-        <Link href="/" className="flex items-center gap-2">
-          <img
-            src="/apotto/apotto_icon.png"
-            alt="apotto Icon"
-            className="h-7 w-7"
-          />
+      <div className="flex h-20 items-center border-b border-border/50 px-6">
+        <Link href="/" className="flex items-center gap-1">
+          <span className="text-2xl font-extrabold tracking-tight leading-none text-emerald-400">
+            apotto
+          </span>
           <img
             src="/apotto/apotto_logo.png"
-            alt="apotto Logo"
-            className="h-5 w-auto"
+            alt="apotto"
+            className="h-16 w-auto"
           />
         </Link>
       </div>
@@ -60,19 +80,30 @@ export function AppSidebar() {
             <Link
               key={item.path}
               href={item.path}
-              className={`group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200 ${
+              aria-current={isActive ? 'page' : undefined}
+              className={`relative group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200 ${
                 isActive
-                  ? 'bg-primary/10 text-primary shadow-sm'
-                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                  ? 'text-foreground shadow-[0_10px_40px_rgba(16,185,129,0.18)] ring-1 ring-emerald-400/30 bg-gradient-to-r from-emerald-500/15 via-emerald-400/10 to-transparent'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-muted'
               }`}
             >
-              <div className={`transition-transform duration-200 ${isActive ? 'scale-110' : 'group-hover:scale-110'}`}>
+              {isActive && (
+                <>
+                  <div className="absolute inset-0 rounded-xl bg-emerald-500/10 blur-md" />
+                  <div className="absolute left-2 top-1/2 h-9 w-[2px] -translate-y-1/2 rounded-full bg-emerald-400/80" />
+                </>
+              )}
+              <div
+                className={`relative flex h-9 w-9 items-center justify-center rounded-lg border border-transparent transition-all duration-200 ${
+                  isActive
+                    ? 'bg-emerald-500/15 text-black dark:text-white border-emerald-400/40 shadow-inner shadow-emerald-500/30'
+                    : 'bg-muted text-muted-foreground group-hover:text-foreground group-hover:border-border/70'
+                } ${isActive ? 'scale-105' : 'group-hover:scale-105'}`}
+              >
                 {item.icon}
               </div>
-              {item.label}
-              {isActive && (
-                <div className="ml-auto w-1.5 h-1.5 rounded-full bg-primary shadow-[0_0_8px_rgba(16,185,129,0.6)]"></div>
-              )}
+              <span className="relative">{item.label}</span>
+              {isActive && <div className="ml-auto h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-[0_0_14px_rgba(16,185,129,0.95)]" />}
             </Link>
           );
         })}
@@ -81,11 +112,11 @@ export function AppSidebar() {
       <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-border/50 bg-muted/10">
         <div className="flex items-center gap-3">
           <div className="h-9 w-9 rounded-full bg-gradient-to-br from-slate-700 to-slate-900 flex items-center justify-center text-xs text-white font-bold border border-white/10 shadow-inner">
-            US
+            {(userName || userEmail || 'U').slice(0, 2).toUpperCase()}
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-xs font-medium text-foreground truncate">User Account</p>
-            <p className="text-[10px] text-muted-foreground truncate">user@example.com</p>
+            <p className="text-xs font-medium text-foreground truncate">{userName || ' '}</p>
+            <p className="text-[10px] text-muted-foreground truncate">{userEmail || ' '}</p>
           </div>
         </div>
       </div>

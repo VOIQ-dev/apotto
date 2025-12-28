@@ -2,15 +2,20 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { AppSidebar } from '@/components/AppSidebar';
-import { Tooltip } from '@/components/ui/Tooltip';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 
 type PdfDocument = {
   id: string;
   name: string;
   size: number;
   uploadedAt: string;
-  uniqueUrl: string;
-  token: string;
+  // 企業別URLは送信時に発行されるため、管理画面では固定URLを表示しない
+  uniqueUrl: string | null;
 };
 
 const MAX_STORAGE_BYTES = 50 * 1024 * 1024; // 50MB
@@ -30,20 +35,21 @@ export default function PdfAssetsPage() {
       if (res.ok) {
         const data = await res.json();
         setPdfs(
-          data.pdfs.map((p: { id: string; filename: string; size_bytes: number; created_at: string; unique_url_token: string }) => ({
-            id: p.id,
-            name: p.filename,
-            size: p.size_bytes,
-            uploadedAt: new Date(p.created_at).toLocaleString('ja-JP', {
-              year: 'numeric',
-              month: '2-digit',
-              day: '2-digit',
-              hour: '2-digit',
-              minute: '2-digit',
-            }),
-            uniqueUrl: `${window.location.origin}/pdf/${p.unique_url_token}`,
-            token: p.unique_url_token,
-          }))
+          (data.pdfs ?? []).map(
+            (p: { id: string; filename: string; size_bytes: number; created_at: string }) => ({
+              id: p.id,
+              name: p.filename,
+              size: p.size_bytes,
+              uploadedAt: new Date(p.created_at).toLocaleString('ja-JP', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+              }),
+              uniqueUrl: null,
+            })
+          )
         );
       }
     } catch (err) {
@@ -115,8 +121,9 @@ export default function PdfAssetsPage() {
         }
 
         const data = await res.json();
+        const pdfId: string | null = data.id ? String(data.id) : null;
         const newPdf: PdfDocument = {
-          id: data.token,
+          id: pdfId ?? crypto.randomUUID(),
           name: data.filename,
           size: data.size,
           uploadedAt: new Date().toLocaleString('ja-JP', {
@@ -126,8 +133,7 @@ export default function PdfAssetsPage() {
             hour: '2-digit',
             minute: '2-digit',
           }),
-          uniqueUrl: `${window.location.origin}${data.uniqueUrl}`,
-          token: data.token,
+          uniqueUrl: null,
         };
         setPdfs((prev) => [newPdf, ...prev]);
       } catch (err) {
@@ -143,7 +149,7 @@ export default function PdfAssetsPage() {
     if (!deleteTarget) return;
 
     try {
-      const res = await fetch(`/api/pdf/${deleteTarget.token}`, {
+      const res = await fetch(`/api/pdf/by-id/${deleteTarget.id}`, {
         method: 'DELETE',
       });
       if (res.ok) {
@@ -237,7 +243,7 @@ export default function PdfAssetsPage() {
                   <th className="px-6 py-4 font-medium">ファイル名</th>
                   <th className="px-6 py-4 font-medium">サイズ</th>
                   <th className="px-6 py-4 font-medium">アップロード日時</th>
-                  <th className="px-6 py-4 font-medium">ユニークURL (発行例)</th>
+                  <th className="px-6 py-4 font-medium">閲覧URL</th>
                   <th className="px-6 py-4 font-medium text-right">操作</th>
                 </tr>
               </thead>
@@ -284,11 +290,18 @@ export default function PdfAssetsPage() {
                           <div className="h-8 w-8 flex-shrink-0 rounded bg-rose-500/10 text-rose-500 flex items-center justify-center">
                             <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.627 0-12 5.373-12 12s5.373 12 12 12 12-5.373 12-12-5.373-12-12-12zm-1 17v-1h2v1h-2zm0-12v10h2v-10h-2z" fillOpacity="0" /><path d="M7 6h10v12h-10z" fill="none" /><path d="M11.25 2h1.5v1.5h-1.5z" fillOpacity="0" /><path d="M19.5 3h-15c-1.103 0-2 .897-2 2v14c0 1.103.897 2 2 2h15c1.103 0 2-.897 2-2v-14c0-1.103-.897-2-2-2zm-3 14h-9v-10h9v10z" opacity=".5" /><path d="M7 6h10v10h-10z" fillOpacity=".2" /></svg>
                           </div>
-                          <Tooltip content={pdf.name} className="block max-w-[220px]">
-                            <span className="font-medium text-foreground truncate block cursor-help">
-                              {pdf.name}
-                            </span>
-                          </Tooltip>
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="font-medium text-foreground truncate block cursor-help max-w-[220px]">
+                                  {pdf.name}
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent className="max-w-[320px] break-words">
+                                {pdf.name}
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
                         </div>
                       </td>
                       <td className="px-6 py-4 text-muted-foreground whitespace-nowrap">
@@ -299,13 +312,21 @@ export default function PdfAssetsPage() {
                       </td>
                       <td className="px-6 py-4 text-muted-foreground">
                         <div className="flex items-center gap-2">
-                          <Tooltip content={pdf.uniqueUrl} className="block max-w-[200px]">
-                            <code className="bg-black/20 rounded px-2 py-1 text-xs font-mono truncate block">
-                              {pdf.uniqueUrl}
-                            </code>
-                          </Tooltip>
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <code className="bg-black/20 rounded px-2 py-1 text-xs font-mono truncate block max-w-[260px]">
+                                  {pdf.uniqueUrl ?? '送信時に企業別URLが発行されます'}
+                                </code>
+                              </TooltipTrigger>
+                              <TooltipContent className="max-w-[420px] break-all">
+                                {pdf.uniqueUrl ?? '送信時に企業別URLが発行されます'}
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
                           <button
                             onClick={async () => {
+                              if (!pdf.uniqueUrl) return;
                               await navigator.clipboard.writeText(pdf.uniqueUrl);
                               setCopiedId(pdf.id);
                               setTimeout(() => setCopiedId((prev) => (prev === pdf.id ? null : prev)), 1000);
@@ -316,6 +337,7 @@ export default function PdfAssetsPage() {
                                 : 'text-primary hover:text-primary/80 hover:bg-primary/10'
                             }`}
                             title="コピー"
+                            disabled={!pdf.uniqueUrl}
                           >
                             {copiedId === pdf.id ? (
                               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">

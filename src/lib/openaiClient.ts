@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import type {
   Response as OpenAIResponse,
   ResponseCreateParamsNonStreaming,
+  ResponseCreateParamsStreaming,
 } from 'openai/resources/responses/responses';
 
 import {
@@ -177,6 +178,54 @@ export async function generateSalesCopy(
   }
 }
 
+// Streaming version: yields text deltas as they arrive
+export async function* generateSalesCopyStream(
+  input: SalesCopyRequest
+): AsyncIterable<string> {
+  const client = getOpenAIClient();
+  const prompt = buildPrompt(input);
+  const requestedModel = input.model ?? DEFAULT_MODEL;
+  if (!ALLOWED_MODELS.has(requestedModel)) {
+    throw new Error(
+      `サポートされていないモデルです。使用可能なモデル: ${Array.from(
+        ALLOWED_MODELS
+      ).join(', ')}`
+    );
+  }
+
+  const allowTemperature = !REASONING_SUPPORTED_MODELS.has(requestedModel);
+  const payload: ResponseCreateParamsStreaming = {
+    model: requestedModel,
+    input: prompt,
+    max_output_tokens: 1500,
+    ...(allowTemperature ? { temperature: 0.4 } : {}),
+    ...(REASONING_SUPPORTED_MODELS.has(requestedModel)
+      ? {
+          reasoning: { effort: 'low' },
+          text: { format: { type: 'text' } },
+        }
+      : {}),
+    stream: true,
+  };
+
+  type SalesCopyStreamEvent = {
+    type?: string;
+    delta?: unknown;
+    output_text?: unknown;
+  };
+
+  const stream = (await client.responses.create(payload)) as unknown as AsyncIterable<SalesCopyStreamEvent>;
+
+  for await (const event of stream) {
+    // responses streaming delivers delta chunks
+    if (event?.type === 'response.output_text.delta' && event?.delta) {
+      yield String(event.delta);
+    } else if (typeof event?.output_text === 'string') {
+      yield event.output_text;
+    }
+  }
+}
+
 function buildPrompt({
   sender,
   recipient,
@@ -207,7 +256,7 @@ function buildPrompt({
 
   const sampleRecipientCompany = !isPlaceholderValue(recipient.companyName)
     ? recipient.companyName!
-    : '貴社';
+    : '';
   const sampleSubject = !isPlaceholderValue(sender.subject)
     ? sender.subject
     : 'ご提案';
@@ -265,7 +314,7 @@ ${productContextText}
 あなたは優秀なB2B営業の専門ライターです。以下の情報をもとに、**そのまま送信できるクオリティの具体的で自然な営業メール**を作成してください。
 
 ## 重要な制約
-- **「◯◯◯」などのプレースホルダーは一切使用しない**
+- **「◯◯◯」などのプレースホルダーは一切使用しない**（ただし、入力で与えた添付資料URLが '{{PDF_LINK_1}}' のような差し込みキーの場合は、その文字列を改変せずに本文へ記載してよい）
 - **抽象的な表現を避け、相手企業の情報を具体的に盛り込む**
 - **クローリング結果を必ず活用し、相手企業に合わせた内容にする**
 - 送信者（Sender）と受信者（Recipient）の情報を絶対に混同しない
@@ -304,8 +353,8 @@ ${attachmentSection}${notesSection}${productContextSection}
 
 ### 1. 件名
 - 簡潔で開封したくなる件名にする
-- 相手企業名や具体的な提案内容を含める
-- 例: 「【${sampleRecipientCompany}向け】${sampleSubject}」
+- 具体的な提案内容を含める（不要な装飾や括弧は使わない）
+- 例: 「${sampleSubject}」
 
 ### 2. 本文構成
 **第1段落: 挨拶と導入**
@@ -324,6 +373,7 @@ ${attachmentSection}${notesSection}${productContextSection}
 - 相手企業が得られるメリットを**具体的に**説明
 - 可能であれば事例や数値（導入効果、削減時間、改善率など）を挙げる
 - 添付資料がある場合、**こちらで用意したPDF閲覧用のURL（${attachments.length > 0 ? attachments.map(a => a.url).join(', ') : 'なし'}）**を自然に紹介
+  - **入力で与えたURL文字列は改変しない**（'{{PDF_LINK_1}}' のような差し込みキーもそのまま記載）
   例: 「詳細は以下の資料でご確認いただけます」「導入事例をまとめた資料をご用意しております」
 
 **第4段落: 行動喚起（CTA）**
@@ -343,7 +393,7 @@ ${attachmentSection}${notesSection}${productContextSection}
 
 ### 4. 絶対に守るべきルール
 ✅ クローリング結果から**サービス名や事業内容を読み取り**、自然な文章で組み込む
-✅ 「◯◯◯」「例: 〜」などのプレースホルダーは使用禁止
+✅ 「◯◯◯」「例: 〜」などのプレースホルダーは使用禁止（ただし、添付資料URLとして与えた '{{PDF_LINK_n}}' は例外で、改変せず本文へ記載してよい）
 ✅ **URLや見出し（【】）を本文にそのまま書かない**（相手企業のURLは不要、添付PDFのURLのみ記載可）
 ✅ 抽象的な表現（「貴社の課題を解決」など）だけでなく、具体的な言及をする
 ✅ 送信者と受信者の情報を混同しない

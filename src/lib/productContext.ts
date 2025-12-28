@@ -2,24 +2,18 @@ export type ProductContextFieldKey =
   | 'productSnapshot'
   | 'productWhy'
   | 'productHow'
-  | 'painPoints'
-  | 'hiddenPain'
-  | 'painSeverity'
   | 'beforeAfter'
   | 'targetSegments'
   | 'persona'
   | 'fitCriteria'
-  | 'unfitCriteria'
   | 'coreFeatures'
   | 'subFeatures'
-  | 'opsFeatures'
   | 'qualBenefits'
   | 'quantBenefits'
   | 'differentiators'
   | 'winReasons'
   | 'implementation'
-  | 'customerEffort'
-  | 'earlyIssues';
+  | 'customerEffort';
 
 export type ProductContext = Record<ProductContextFieldKey, string>;
 
@@ -64,20 +58,6 @@ export const PRODUCT_CONTEXT_GROUPS: ProductContextGroup[] = [
     title: '解決できる課題（Before → After）',
     fields: [
       {
-        key: 'painPoints',
-        label: '顕在課題',
-        helper: '現場で起きている痛みや具体的な課題',
-      },
-      {
-        key: 'hiddenPain',
-        label: '潜在課題・見えにくい課題',
-      },
-      {
-        key: 'painSeverity',
-        label: '課題の深刻度',
-        helper: '時間的/機会/コスト損失や心理的ストレスなど',
-      },
-      {
         key: 'beforeAfter',
         label: 'Before → After',
         helper: '導入前後の状態を比較して記載',
@@ -102,10 +82,6 @@ export const PRODUCT_CONTEXT_GROUPS: ProductContextGroup[] = [
         key: 'fitCriteria',
         label: '効果が出やすい会社',
       },
-      {
-        key: 'unfitCriteria',
-        label: '効果が出にくい会社（率直に）',
-      },
     ],
   },
   {
@@ -120,11 +96,6 @@ export const PRODUCT_CONTEXT_GROUPS: ProductContextGroup[] = [
       {
         key: 'subFeatures',
         label: 'サブ機能',
-      },
-      {
-        key: 'opsFeatures',
-        label: '運用機能',
-        helper: '管理者/現場の使い方の違いなど',
       },
     ],
   },
@@ -173,10 +144,6 @@ export const PRODUCT_CONTEXT_GROUPS: ProductContextGroup[] = [
         label: '顧客側の作業量',
         helper: '準備物・任せられる範囲・手離れ感',
       },
-      {
-        key: 'earlyIssues',
-        label: '初期に起きやすいトラブルと対処法',
-      },
     ],
   },
 ];
@@ -188,24 +155,18 @@ export function createEmptyProductContext(): ProductContext {
         'productSnapshot',
         'productWhy',
         'productHow',
-        'painPoints',
-        'hiddenPain',
-        'painSeverity',
         'beforeAfter',
         'targetSegments',
         'persona',
         'fitCriteria',
-        'unfitCriteria',
         'coreFeatures',
         'subFeatures',
-        'opsFeatures',
         'qualBenefits',
         'quantBenefits',
         'differentiators',
         'winReasons',
         'implementation',
         'customerEffort',
-        'earlyIssues',
       ] as ProductContextFieldKey[]
     ).map((key) => [key, ''])
   ) as ProductContext;

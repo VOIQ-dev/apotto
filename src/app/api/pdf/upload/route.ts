@@ -1,39 +1,50 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+import { createSupabaseServiceClient } from '@/lib/supabaseServer';
+import { applyAuthCookies, getAccountContextFromRequest } from '@/lib/routeAuth';
+
 const bucketName = process.env.NEXT_PUBLIC_SUPABASE_BUCKET || 'pdf-assets';
-
-// 企業フォルダ名（今回は固定で VOIQ）
-const COMPANY_FOLDER = 'VOIQ';
 
 export async function POST(request: NextRequest) {
   try {
+    const { user, companyId, cookieMutations } =
+      await getAccountContextFromRequest(request);
+
+    const json = (body: unknown, init?: { status?: number }) => {
+      const res = NextResponse.json(body, { status: init?.status });
+      applyAuthCookies(res, cookieMutations);
+      return res;
+    };
+
+    if (!user) {
+      return json({ error: '認証が必要です' }, { status: 401 });
+    }
+    if (!companyId) {
+      return json({ error: '会社情報が紐づいていません' }, { status: 403 });
+    }
+
     const formData = await request.formData();
     const file = formData.get('file') as File | null;
 
     if (!file) {
-      return NextResponse.json({ error: 'ファイルが指定されていません' }, { status: 400 });
+      return json({ error: 'ファイルが指定されていません' }, { status: 400 });
     }
 
     if (file.type !== 'application/pdf') {
-      return NextResponse.json({ error: 'PDFファイルのみアップロード可能です' }, { status: 400 });
+      return json({ error: 'PDFファイルのみアップロード可能です' }, { status: 400 });
     }
 
     // 50MB 制限
     const MAX_SIZE = 50 * 1024 * 1024;
     if (file.size > MAX_SIZE) {
-      return NextResponse.json({ error: 'ファイルサイズは50MB以下にしてください' }, { status: 400 });
+      return json({ error: 'ファイルサイズは50MB以下にしてください' }, { status: 400 });
     }
 
-    const supabase = createClient(supabaseUrl, supabaseServiceKey, {
-      auth: { persistSession: false },
-    });
+    const supabase = createSupabaseServiceClient();
 
     // ユニークトークン生成
     const token = crypto.randomUUID();
-    const storagePath = `${COMPANY_FOLDER}/${token}.pdf`;
+    const storagePath = `${companyId}/${token}.pdf`;
 
     // Storage にアップロード
     const arrayBuffer = await file.arrayBuffer();
@@ -46,32 +57,48 @@ export async function POST(request: NextRequest) {
 
     if (uploadError) {
       console.error('Storage upload error:', uploadError);
-      return NextResponse.json({ error: 'ストレージへのアップロードに失敗しました' }, { status: 500 });
+      return json(
+        { error: 'ストレージへのアップロードに失敗しました' },
+        { status: 500 }
+      );
     }
 
-    // DB に PDF メタ情報を保存（pdf_documents テーブル）
-    const { error: dbError } = await supabase.from('pdf_documents').insert({
-      filename: file.name,
-      storage_path: storagePath,
-      size_bytes: file.size,
-      unique_url_token: token,
-      company_name: COMPANY_FOLDER,
-    });
+    // DB に PDF メタ情報を保存（pdfs テーブル）
+    const { data: inserted, error: dbError } = await supabase
+      .from('pdfs')
+      .insert({
+        original_filename: file.name,
+        storage_path: storagePath,
+        size_bytes: file.size,
+        company_id: companyId,
+        is_deleted: false,
+      })
+      .select('id, storage_path')
+      .single();
 
     if (dbError) {
       console.error('DB insert error:', dbError);
       // ロールバック: アップロードしたファイルを削除
       await supabase.storage.from(bucketName).remove([storagePath]);
-      return NextResponse.json({ error: 'データベースへの保存に失敗しました' }, { status: 500 });
+      return json(
+        { error: 'データベースへの保存に失敗しました' },
+        { status: 500 }
+      );
     }
 
-    // ユニーク URL を生成（相対パス）
-    const uniqueUrl = `/pdf/${token}`;
+    const { data: signedUrlData, error: signedUrlError } = await supabase.storage
+      .from(bucketName)
+      .createSignedUrl(storagePath, 3600);
 
-    return NextResponse.json({
+    if (signedUrlError) {
+      console.error('Signed URL error:', signedUrlError);
+    }
+
+    return json({
       success: true,
-      token,
-      uniqueUrl,
+      id: inserted?.id ?? null,
+      storagePath,
+      signedUrl: signedUrlData?.signedUrl ?? null,
       filename: file.name,
       size: file.size,
     });
@@ -80,6 +107,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: '予期しないエラーが発生しました' }, { status: 500 });
   }
 }
+
+
+
+
 
 
 

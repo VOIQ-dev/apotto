@@ -31,6 +31,7 @@ export default function PdfTokenPage({ params }: PdfTokenPageProps) {
   const [pdfInfo, setPdfInfo] = useState<PdfInfo | null>(null);
   const [loading, setLoading] = useState(false);
   const [notFound, setNotFound] = useState(false);
+  const [revoked, setRevoked] = useState(false);
   const [showPrivacyModal, setShowPrivacyModal] = useState(true);
 
   // ページ送り式の表示
@@ -63,7 +64,14 @@ export default function PdfTokenPage({ params }: PdfTokenPageProps) {
         const pdfjsLib = await import('pdfjs-dist');
         pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
 
-        const loadingTask = pdfjsLib.getDocument(pdfInfo.signedUrl);
+        // CORSを避けるため一度フェッチしてバイナリで渡す
+        const res = await fetch(pdfInfo.signedUrl);
+        if (!res.ok) {
+          throw new Error(`failed to fetch pdf: ${res.status}`);
+        }
+        const buffer = await res.arrayBuffer();
+
+        const loadingTask = pdfjsLib.getDocument({ data: buffer });
         const pdf = await loadingTask.promise;
 
         if (cancelled) return;
@@ -150,10 +158,25 @@ export default function PdfTokenPage({ params }: PdfTokenPageProps) {
         readPercentage,
       }));
 
-      // ログ出力
-      console.log(
-        `📖 読了率: ${readPercentage}% | ページ: ${pageNum}/${numPages} | 最大到達: ${maxPage}ページ | 経過時間: ${stats.elapsedSeconds}秒`
-      );
+      // 進捗をサーバへ保存（ベストエフォート）
+      if (submitted && email.trim()) {
+        const elapsed = startTimeRef.current
+          ? Math.floor((Date.now() - startTimeRef.current) / 1000)
+          : 0;
+        void fetch(`/api/pdf/${token}/progress`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            viewer_email: email.trim(),
+            read_percentage: readPercentage,
+            max_page_reached: maxPage,
+            elapsed_seconds: elapsed,
+          }),
+        }).catch(() => {
+          // ignore
+        });
+      }
+
     } catch (err) {
       console.error(`ページ ${pageNum} のレンダリングエラー:`, err);
     } finally {
@@ -178,10 +201,18 @@ export default function PdfTokenPage({ params }: PdfTokenPageProps) {
     setError(null);
 
     try {
-      const res = await fetch(`/api/pdf/${token}`);
+      const res = await fetch(`/api/pdf/${token}/open`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ viewer_email: email.trim() }),
+      });
       if (!res.ok) {
         if (res.status === 404) {
           setNotFound(true);
+          return;
+        }
+        if (res.status === 410) {
+          setRevoked(true);
           return;
         }
         throw new Error('PDF情報の取得に失敗しました');
@@ -190,8 +221,6 @@ export default function PdfTokenPage({ params }: PdfTokenPageProps) {
       const data = await res.json();
       setPdfInfo(data.pdf);
       setSubmitted(true);
-
-      console.log(`📄 PDF閲覧開始 | ファイル: ${data.pdf.filename} | メール: ${email} | トークン: ${token}`);
     } catch (err) {
       console.error(err);
       setError('PDFの読み込みに失敗しました。');
@@ -205,9 +234,8 @@ export default function PdfTokenPage({ params }: PdfTokenPageProps) {
     async function checkToken() {
       try {
         const res = await fetch(`/api/pdf/${token}`, { method: 'HEAD' });
-        if (res.status === 404) {
-          setNotFound(true);
-        }
+        if (res.status === 404) setNotFound(true);
+        if (res.status === 410) setRevoked(true);
       } catch {
         // エラーは無視
       }
@@ -224,9 +252,22 @@ export default function PdfTokenPage({ params }: PdfTokenPageProps) {
 
   // リセット
   const handleReset = () => {
-    console.log(
-      `📄 PDF閲覧終了 | 読了率: ${stats.readPercentage}% | 最大到達ページ: ${stats.maxPageReached}/${stats.totalPages} | 閲覧時間: ${formatTime(stats.elapsedSeconds)}`
-    );
+    // 最終状態をベストエフォートで保存
+    if (submitted && email.trim()) {
+      void fetch(`/api/pdf/${token}/progress`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          viewer_email: email.trim(),
+          read_percentage: stats.readPercentage,
+          max_page_reached: stats.maxPageReached,
+          elapsed_seconds: stats.elapsedSeconds,
+        }),
+      }).catch(() => {
+        // ignore
+      });
+    }
+
     setSubmitted(false);
     setEmail('');
     setPdfInfo(null);
@@ -246,12 +287,18 @@ export default function PdfTokenPage({ params }: PdfTokenPageProps) {
     }
   };
 
-  if (notFound) {
+  if (notFound || revoked) {
     return (
       <div className="min-h-screen bg-slate-50 px-4 py-12 text-slate-900 flex items-center justify-center">
         <div className="text-center">
-          <h1 className="text-2xl font-semibold text-slate-900">PDFが見つかりません</h1>
-          <p className="mt-2 text-slate-600">このリンクは無効か、PDFが削除された可能性があります。</p>
+          <h1 className="text-2xl font-semibold text-slate-900">
+            {notFound ? 'PDFが見つかりません' : 'この資料は削除されました'}
+          </h1>
+          <p className="mt-2 text-slate-600">
+            {notFound
+              ? 'このリンクは無効か、PDFが削除された可能性があります。'
+              : '指定された資料は削除済みのため閲覧できません。'}
+          </p>
         </div>
       </div>
     );
@@ -328,15 +375,17 @@ export default function PdfTokenPage({ params }: PdfTokenPageProps) {
         </div>
       )}
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 rounded-3xl bg-white p-6 shadow-xl ring-1 ring-slate-100">
-        <header className="text-center">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-            apotto
-          </p>
-          <h1 className="mt-2 text-2xl font-semibold">資料閲覧ページ</h1>
-          <p className="mt-1 text-sm text-slate-600">
-            セキュアなPDF閲覧のため、メールアドレスを入力した方のみ表示します。
-          </p>
-        </header>
+        {!submitted && (
+          <header className="text-center">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              apotto
+            </p>
+            <h1 className="mt-2 text-2xl font-semibold">PDF閲覧</h1>
+            <p className="mt-1 text-sm text-slate-600">
+              PDFを表示するためにメールアドレスを入力してください。
+            </p>
+          </header>
+        )}
 
         {!submitted ? (
           <form onSubmit={handleSubmit} className="flex flex-col gap-4 max-w-md mx-auto w-full">
@@ -363,35 +412,6 @@ export default function PdfTokenPage({ params }: PdfTokenPageProps) {
           </form>
         ) : pdfInfo ? (
           <div className="space-y-4">
-            {/* ステータスバー */}
-            <div className="rounded-2xl border border-slate-200 bg-slate-100 p-4 text-sm text-slate-600">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p>
-                    <span className="font-semibold text-slate-900">{email}</span> として閲覧中
-                  </p>
-                  <p className="mt-1 text-xs text-slate-500">
-                    ファイル: {pdfInfo.filename}
-                  </p>
-                </div>
-                <div className="text-right">
-                  <p className="text-lg font-bold text-slate-900">{stats.readPercentage}%</p>
-                  <p className="text-xs text-slate-500">読了率</p>
-                </div>
-              </div>
-              {/* プログレスバー */}
-              <div className="mt-3 h-2 w-full rounded-full bg-slate-200 overflow-hidden">
-                <div
-                  className="h-full bg-emerald-500 transition-all duration-300"
-                  style={{ width: `${stats.readPercentage}%` }}
-                />
-              </div>
-              <div className="mt-2 flex justify-between text-xs text-slate-500">
-                <span>閲覧時間: {formatTime(stats.elapsedSeconds)}</span>
-                <span>最大到達: {stats.maxPageReached}ページ</span>
-              </div>
-            </div>
-
             {/* ページナビゲーション */}
             <div className="flex items-center justify-center gap-4">
               <button
@@ -404,9 +424,6 @@ export default function PdfTokenPage({ params }: PdfTokenPageProps) {
                 </svg>
                 前へ
               </button>
-              <span className="text-sm font-medium text-slate-700">
-                {currentPage} / {totalPages} ページ
-              </span>
               <button
                 onClick={() => goToPage(currentPage + 1)}
                 disabled={currentPage >= totalPages || pageLoading}
@@ -433,25 +450,6 @@ export default function PdfTokenPage({ params }: PdfTokenPageProps) {
                 />
               )}
               <canvas ref={canvasRef} className="hidden" />
-            </div>
-
-            {/* ページジャンプ */}
-            <div className="flex items-center justify-center gap-2">
-              <span className="text-sm text-slate-600">ページ移動:</span>
-              <input
-                type="number"
-                min={1}
-                max={totalPages}
-                value={currentPage}
-                onChange={(e) => {
-                  const page = parseInt(e.target.value, 10);
-                  if (page >= 1 && page <= totalPages) {
-                    goToPage(page);
-                  }
-                }}
-                className="w-16 rounded-lg border border-slate-200 px-2 py-1 text-center text-sm"
-              />
-              <span className="text-sm text-slate-600">/ {totalPages}</span>
             </div>
 
             <button

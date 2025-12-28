@@ -141,7 +141,18 @@ export function Hero() {
                 </p>
 
                 <div className="mt-10 flex items-center justify-center gap-x-6 animate-fade-in-up delay-300">
-                    
+                    <Link
+                        href="/billing"
+                        className="rounded-full bg-slate-900 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-emerald-500/20 transition hover:-translate-y-0.5 hover:shadow-xl hover:bg-slate-800"
+                    >
+                        決済プランを見る
+                    </Link>
+                    <Link
+                        href="/login"
+                        className="rounded-full border border-slate-300 px-6 py-3 text-sm font-semibold text-slate-900 bg-white/80 backdrop-blur transition hover:-translate-y-0.5 hover:shadow-md"
+                    >
+                        ログイン
+                    </Link>
                 </div>
 
                 {/* Hero Image / Dashboard Preview */}

@@ -1,0 +1,44 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+# コミットメッセージの取得
+commit_msg=$(cat "$1")
+
+# コミットメッセージのフォーマットチェック
+# 正規表現: type: subject の形式をチェック
+pattern="^(feat|fix|refactor|perf|style|docs|test|chore|build|ci): .{1,50}$"
+
+if ! echo "$commit_msg" | head -n 1 | grep -qE "$pattern"; then
+  echo "❌ コミットメッセージが規約に違反しています"
+  echo ""
+  echo "正しい形式: <type>: <subject>"
+  echo ""
+  echo "使用可能なtype:"
+  echo "  - feat:     新機能追加"
+  echo "  - fix:      バグ修正"
+  echo "  - refactor: リファクタリング"
+  echo "  - perf:     パフォーマンス改善"
+  echo "  - style:    コードスタイル修正"
+  echo "  - docs:     ドキュメント変更"
+  echo "  - test:     テスト追加・修正"
+  echo "  - chore:    雑務"
+  echo "  - build:    ビルドシステム変更"
+  echo "  - ci:       CI設定変更"
+  echo ""
+  echo "例: feat: PDF閲覧追跡機能を追加"
+  echo ""
+  echo "詳細: docs/commit-convention.md を参照"
+  exit 1
+fi
+
+# 件名の長さチェック（50文字以内）
+subject=$(echo "$commit_msg" | head -n 1 | cut -d':' -f2- | sed 's/^ //')
+subject_length=${#subject}
+
+if [ "$subject_length" -gt 50 ]; then
+  echo "⚠️  警告: 件名が50文字を超えています（${subject_length}文字）"
+  echo "   簡潔な説明を心がけてください"
+  echo ""
+fi
+
+echo "✅ コミットメッセージチェック完了"
