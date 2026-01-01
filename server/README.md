@@ -53,10 +53,10 @@ https://railway.app/ でアカウントを作成
 
 「Variables」タブで以下を設定:
 
-| 変数名 | 値 | 説明 |
-|--------|-----|------|
-| `PORT` | `3001` | サーバーポート（Railway が自動設定する場合は不要） |
-| `ALLOWED_ORIGINS` | `https://your-app.vercel.app` | CORS許可オリジン（カンマ区切りで複数可） |
+| 変数名            | 値                            | 説明                                               |
+| ----------------- | ----------------------------- | -------------------------------------------------- |
+| `PORT`            | `3001`                        | サーバーポート（Railway が自動設定する場合は不要） |
+| `ALLOWED_ORIGINS` | `https://your-app.vercel.app` | CORS許可オリジン（カンマ区切りで複数可）           |
 
 ### 5. デプロイ
 
@@ -66,8 +66,8 @@ https://railway.app/ でアカウントを作成
 
 Vercel のプロジェクト設定で以下を追加:
 
-| 変数名 | 値 |
-|--------|-----|
+| 変数名                   | 値                                        |
+| ------------------------ | ----------------------------------------- |
 | `AUTO_SUBMIT_WORKER_URL` | `https://your-railway-app.up.railway.app` |
 
 ## API エンドポイント
@@ -79,6 +79,7 @@ GET /health
 ```
 
 レスポンス:
+
 ```json
 {
   "status": "ok",
@@ -105,6 +106,7 @@ Content-Type: application/json
 ```
 
 レスポンス:
+
 ```json
 {
   "success": true,
@@ -118,6 +120,7 @@ Content-Type: application/json
 ### ブラウザ起動エラー
 
 Docker 環境では以下の引数が必要です（すでに設定済み）:
+
 - `--no-sandbox`
 - `--disable-setuid-sandbox`
 - `--disable-dev-shm-usage`
@@ -129,4 +132,3 @@ Railway のプラン設定でメモリを増やしてください（推奨: 1GB�
 ### タイムアウト
 
 長時間のフォーム操作が必要な場合は、Railway のサービス設定でタイムアウトを延長してください。
-

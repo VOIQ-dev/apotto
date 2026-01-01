@@ -1,13 +1,8 @@
-'use client';
+"use client";
 
-import { useState, useEffect, useCallback } from 'react';
-import { AppSidebar } from '@/components/AppSidebar';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
+import { useState, useEffect, useCallback } from "react";
+import { AppSidebar } from "@/components/AppSidebar";
+import { Tooltip } from "@mantine/core";
 
 type PdfDocument = {
   id: string;
@@ -18,13 +13,12 @@ type PdfDocument = {
   uniqueUrl: string | null;
 };
 
-const MAX_STORAGE_BYTES = 50 * 1024 * 1024; // 50MB
+const MAX_STORAGE_BYTES = 15 * 1024 * 1024; // 15MB
 
 export default function PdfAssetsPage() {
   const [pdfs, setPdfs] = useState<PdfDocument[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<PdfDocument | null>(null);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [isUploading, setIsUploading] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -32,29 +26,34 @@ export default function PdfAssetsPage() {
   // PDF一覧を取得
   const fetchPdfs = useCallback(async () => {
     try {
-      const res = await fetch('/api/pdf/list');
+      const res = await fetch("/api/pdf/list");
       if (res.ok) {
         const data = await res.json();
         setPdfs(
           (data.pdfs ?? []).map(
-            (p: { id: string; filename: string; size_bytes: number; created_at: string }) => ({
+            (p: {
+              id: string;
+              filename: string;
+              size_bytes: number;
+              created_at: string;
+            }) => ({
               id: p.id,
               name: p.filename,
               size: p.size_bytes,
-              uploadedAt: new Date(p.created_at).toLocaleString('ja-JP', {
-                year: 'numeric',
-                month: '2-digit',
-                day: '2-digit',
-                hour: '2-digit',
-                minute: '2-digit',
+              uploadedAt: new Date(p.created_at).toLocaleString("ja-JP", {
+                year: "numeric",
+                month: "2-digit",
+                day: "2-digit",
+                hour: "2-digit",
+                minute: "2-digit",
               }),
               uniqueUrl: null,
-            })
-          )
+            }),
+          ),
         );
       }
     } catch (err) {
-      console.error('PDF一覧取得エラー:', err);
+      console.error("PDF一覧取得エラー:", err);
     } finally {
       setIsLoading(false);
     }
@@ -90,34 +89,40 @@ export default function PdfAssetsPage() {
     if (files && files.length > 0) {
       handleFiles(files);
     }
-    e.target.value = '';
+    e.target.value = "";
   };
 
   const handleFiles = async (files: FileList) => {
     setIsUploading(true);
 
     for (const file of Array.from(files)) {
-      if (file.type !== 'application/pdf') {
+      if (file.type !== "application/pdf") {
         alert(`${file.name} はPDFではありません。`);
         continue;
       }
       if (totalSize + file.size > MAX_STORAGE_BYTES) {
-        alert('容量制限（50MB）を超えるためアップロードできません。');
+        alert("容量制限（15MB）を超えるためアップロードできません。");
+        continue;
+      }
+      if (file.size > MAX_STORAGE_BYTES) {
+        alert(
+          `${file.name} のファイルサイズが15MBを超えているため、アップロードできません。`,
+        );
         continue;
       }
 
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append("file", file);
 
       try {
-        const res = await fetch('/api/pdf/upload', {
-          method: 'POST',
+        const res = await fetch("/api/pdf/upload", {
+          method: "POST",
           body: formData,
         });
 
         if (!res.ok) {
           const err = await res.json();
-          alert(`アップロード失敗: ${err.error || '不明なエラー'}`);
+          alert(`アップロード失敗: ${err.error || "不明なエラー"}`);
           continue;
         }
 
@@ -127,19 +132,19 @@ export default function PdfAssetsPage() {
           id: pdfId ?? crypto.randomUUID(),
           name: data.filename,
           size: data.size,
-          uploadedAt: new Date().toLocaleString('ja-JP', {
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit',
-            hour: '2-digit',
-            minute: '2-digit',
+          uploadedAt: new Date().toLocaleString("ja-JP", {
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
           }),
           uniqueUrl: null,
         };
         setPdfs((prev) => [newPdf, ...prev]);
       } catch (err) {
-        console.error('Upload error:', err);
-        alert('アップロード中にエラーが発生しました。');
+        console.error("Upload error:", err);
+        alert("アップロード中にエラーが発生しました。");
       }
     }
 
@@ -151,16 +156,16 @@ export default function PdfAssetsPage() {
 
     try {
       const res = await fetch(`/api/pdf/by-id/${deleteTarget.id}`, {
-        method: 'DELETE',
+        method: "DELETE",
       });
       if (res.ok) {
         setPdfs((prev) => prev.filter((pdf) => pdf.id !== deleteTarget.id));
       } else {
-        alert('削除に失敗しました');
+        alert("削除に失敗しました");
       }
     } catch (err) {
-      console.error('Delete error:', err);
-      alert('削除中にエラーが発生しました');
+      console.error("Delete error:", err);
+      alert("削除中にエラーが発生しました");
     }
     setDeleteTarget(null);
   };
@@ -176,7 +181,9 @@ export default function PdfAssetsPage() {
       <main className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-6 py-10">
         <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div className="space-y-1">
-            <h1 className="text-3xl font-bold tracking-tight text-foreground">PDF資料管理</h1>
+            <h1 className="text-3xl font-bold tracking-tight text-foreground">
+              PDF資料管理
+            </h1>
             <p className="text-base text-muted-foreground max-w-2xl">
               AI生成時の添付資料として使用するPDFを管理します。登録されたPDFはユニークURL化され、開封通知や閲覧分析が可能になります。
             </p>
@@ -186,15 +193,18 @@ export default function PdfAssetsPage() {
         {/* Storage Usage */}
         <section className="card-clean p-6">
           <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">ストレージ使用量</h3>
+            <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
+              ストレージ使用量
+            </h3>
             <span className="text-sm font-medium text-foreground">
-              {formatBytes(totalSize)} / {formatBytes(MAX_STORAGE_BYTES)} ({usagePercentage.toFixed(1)}%)
+              {formatBytes(totalSize)} / {formatBytes(MAX_STORAGE_BYTES)} (
+              {usagePercentage.toFixed(1)}%)
             </span>
           </div>
           <div className="h-3 w-full rounded-full bg-muted overflow-hidden">
             <div
               className={`h-full transition-all duration-500 ease-out ${
-                usagePercentage > 90 ? 'bg-rose-500' : 'bg-primary'
+                usagePercentage > 90 ? "bg-rose-500" : "bg-primary"
               }`}
               style={{ width: `${usagePercentage}%` }}
             />
@@ -208,7 +218,7 @@ export default function PdfAssetsPage() {
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
             className={`dropzone group relative flex flex-col items-center justify-center rounded-2xl p-12 text-center cursor-pointer ${
-              isDragging ? 'is-active' : ''
+              isDragging ? "is-active" : ""
             }`}
           >
             <input
@@ -221,17 +231,33 @@ export default function PdfAssetsPage() {
             <div
               className={`flex h-16 w-16 items-center justify-center rounded-full mb-4 transition-colors ${
                 isDragging
-                  ? 'bg-primary/20 text-primary'
-                  : 'bg-muted text-muted-foreground group-hover:bg-primary/20 group-hover:text-primary'
+                  ? "bg-primary/20 text-primary"
+                  : "bg-muted text-muted-foreground group-hover:bg-primary/20 group-hover:text-primary"
               }`}
             >
-              <svg className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+              <svg
+                className="h-8 w-8"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+                />
               </svg>
             </div>
-            <p className="text-lg font-bold text-foreground">PDFをここにドラッグ＆ドロップ</p>
-            <p className="text-sm text-muted-foreground mt-2">またはクリックしてファイルを選択</p>
-            <p className="text-xs text-muted-foreground/70 mt-4">最大 50MB までアップロード可能</p>
+            <p className="text-lg font-bold text-foreground">
+              PDFをここにドラッグ＆ドロップ
+            </p>
+            <p className="text-sm text-muted-foreground mt-2">
+              またはクリックしてファイルを選択
+            </p>
+            <p className="text-xs text-muted-foreground/70 mt-4">
+              最大 15MB までアップロード可能
+            </p>
           </label>
         </section>
 
@@ -244,14 +270,13 @@ export default function PdfAssetsPage() {
                   <th className="px-6 py-4 font-medium">ファイル名</th>
                   <th className="px-6 py-4 font-medium">サイズ</th>
                   <th className="px-6 py-4 font-medium">アップロード日時</th>
-                  <th className="px-6 py-4 font-medium">閲覧URL</th>
                   <th className="px-6 py-4 font-medium text-right">操作</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/50">
                 {isLoading ? (
                   <tr>
-                    <td colSpan={5} className="px-6 py-12">
+                    <td colSpan={4} className="px-6 py-12">
                       <div className="flex flex-col items-center justify-center gap-3">
                         <svg
                           className="h-8 w-8 animate-spin text-primary"
@@ -273,84 +298,39 @@ export default function PdfAssetsPage() {
                             d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                           />
                         </svg>
-                        <span className="text-sm text-muted-foreground">PDF一覧を読み込み中...</span>
+                        <span className="text-sm text-muted-foreground">
+                          PDF一覧を読み込み中...
+                        </span>
                       </div>
                     </td>
                   </tr>
                 ) : pdfs.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="px-6 py-12 text-center text-muted-foreground">
+                    <td
+                      colSpan={4}
+                      className="px-6 py-12 text-center text-muted-foreground"
+                    >
                       PDFが登録されていません
                     </td>
                   </tr>
                 ) : (
                   pdfs.map((pdf) => (
-                    <tr key={pdf.id} className="group hover:bg-muted/30 transition-colors">
+                    <tr
+                      key={pdf.id}
+                      className="group hover:bg-muted/30 transition-colors"
+                    >
                       <td className="px-6 py-4">
-                        <div className="flex items-center gap-3">
-                          <div className="h-8 w-8 flex-shrink-0 rounded bg-rose-500/10 text-rose-500 flex items-center justify-center">
-                            <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.627 0-12 5.373-12 12s5.373 12 12 12 12-5.373 12-12-5.373-12-12-12zm-1 17v-1h2v1h-2zm0-12v10h2v-10h-2z" fillOpacity="0" /><path d="M7 6h10v12h-10z" fill="none" /><path d="M11.25 2h1.5v1.5h-1.5z" fillOpacity="0" /><path d="M19.5 3h-15c-1.103 0-2 .897-2 2v14c0 1.103.897 2 2 2h15c1.103 0 2-.897 2-2v-14c0-1.103-.897-2-2-2zm-3 14h-9v-10h9v10z" opacity=".5" /><path d="M7 6h10v10h-10z" fillOpacity=".2" /></svg>
-                          </div>
-                          <TooltipProvider>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <span className="font-medium text-foreground truncate block cursor-help max-w-[220px]">
-                                  {pdf.name}
-                                </span>
-                              </TooltipTrigger>
-                              <TooltipContent className="max-w-[320px] break-words">
-                                {pdf.name}
-                              </TooltipContent>
-                            </Tooltip>
-                          </TooltipProvider>
-                        </div>
+                        <Tooltip label={pdf.name} position="top" withArrow>
+                          <span className="font-medium text-foreground truncate block max-w-[500px]">
+                            {pdf.name}
+                          </span>
+                        </Tooltip>
                       </td>
                       <td className="px-6 py-4 text-muted-foreground whitespace-nowrap">
                         {formatBytes(pdf.size)}
                       </td>
                       <td className="px-6 py-4 text-muted-foreground whitespace-nowrap">
                         {pdf.uploadedAt}
-                      </td>
-                      <td className="px-6 py-4 text-muted-foreground">
-                        <div className="flex items-center gap-2">
-                          <TooltipProvider>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <code className="bg-black/20 rounded px-2 py-1 text-xs font-mono truncate block max-w-[260px]">
-                                  {pdf.uniqueUrl ?? '送信時に企業別URLが発行されます'}
-                                </code>
-                              </TooltipTrigger>
-                              <TooltipContent className="max-w-[420px] break-all">
-                                {pdf.uniqueUrl ?? '送信時に企業別URLが発行されます'}
-                              </TooltipContent>
-                            </Tooltip>
-                          </TooltipProvider>
-                          <button
-                            onClick={async () => {
-                              if (!pdf.uniqueUrl) return;
-                              await navigator.clipboard.writeText(pdf.uniqueUrl);
-                              setCopiedId(pdf.id);
-                              setTimeout(() => setCopiedId((prev) => (prev === pdf.id ? null : prev)), 1000);
-                            }}
-                            className={`p-1 rounded transition-colors ${
-                              copiedId === pdf.id
-                                ? 'text-emerald-400 bg-emerald-500/10'
-                                : 'text-primary hover:text-primary/80 hover:bg-primary/10'
-                            }`}
-                            title="コピー"
-                            disabled={!pdf.uniqueUrl}
-                          >
-                            {copiedId === pdf.id ? (
-                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                              </svg>
-                            ) : (
-                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                              </svg>
-                            )}
-                          </button>
-                        </div>
                       </td>
                       <td className="px-6 py-4 text-right">
                         <button
@@ -379,28 +359,41 @@ export default function PdfAssetsPage() {
           >
             <div className="flex items-center gap-4">
               <div className="h-12 w-12 rounded-full bg-rose-500/15 text-rose-400 flex items-center justify-center">
-                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 9v4m0 4h.01M5 7h14M9 7l1-2h4l1 2m2 0v11a2 2 0 01-2 2H9a2 2 0 01-2-2V7" />
+                <svg
+                  className="w-6 h-6"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.8}
+                    d="M12 9v4m0 4h.01M5 7h14M9 7l1-2h4l1 2m2 0v11a2 2 0 01-2 2H9a2 2 0 01-2-2V7"
+                  />
                 </svg>
               </div>
               <div>
-                <p id="pdf-delete-title" className="text-lg font-semibold text-foreground">
+                <p
+                  id="pdf-delete-title"
+                  className="text-lg font-semibold text-foreground"
+                >
                   PDFを削除しますか？
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  削除後はリンク経由で閲覧できなくなります。この操作は取り消せません。
+                  この操作は取り消せません。
                 </p>
               </div>
             </div>
 
             <div className="rounded-xl border border-border/70 bg-muted/30 p-4">
-              <p className="text-sm font-medium text-foreground truncate">{deleteTarget.name}</p>
-              <p className="text-xs text-muted-foreground mt-1">
-                サイズ: {formatBytes(deleteTarget.size)} ・ 登録日時: {deleteTarget.uploadedAt}
+              <p className="text-sm font-medium text-foreground truncate">
+                {deleteTarget.name}
               </p>
-              <div className="mt-2 text-xs text-muted-foreground break-all">
-                URL: {deleteTarget.uniqueUrl}
-              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                サイズ: {formatBytes(deleteTarget.size)} ・ 登録日時:{" "}
+                {deleteTarget.uploadedAt}
+              </p>
             </div>
 
             <div className="flex justify-end gap-3">
@@ -427,10 +420,9 @@ export default function PdfAssetsPage() {
 }
 
 function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
+  if (bytes === 0) return "0 B";
   const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const sizes = ["B", "KB", "MB", "GB"];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
 }
-

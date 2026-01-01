@@ -47,10 +47,6 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    console.log(
-      `[auto-submit/batch] Forwarding ${items.length} items to worker`,
-    );
-
     // Railway ワーカーにリクエストを転送（SSEをプロキシ）
     const workerResponse = await fetch(`${WORKER_URL}/auto-submit/batch`, {
       method: "POST",

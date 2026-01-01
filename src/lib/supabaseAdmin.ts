@@ -1,10 +1,10 @@
-import type { SupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 export async function findAuthUserIdByEmail(
   supabase: SupabaseClient,
-  email: string
+  email: string,
 ): Promise<string | null> {
-  const target = String(email ?? '')
+  const target = String(email ?? "")
     .trim()
     .toLowerCase();
   if (!target) return null;
@@ -19,7 +19,9 @@ export async function findAuthUserIdByEmail(
     });
     if (error) throw error;
 
-    const found = data.users.find((u) => String(u.email ?? '').toLowerCase() === target);
+    const found = data.users.find(
+      (u) => String(u.email ?? "").toLowerCase() === target,
+    );
     if (found?.id) return found.id;
 
     if (data.users.length < perPage) break;
@@ -27,8 +29,3 @@ export async function findAuthUserIdByEmail(
 
   return null;
 }
-
-
-
-
-

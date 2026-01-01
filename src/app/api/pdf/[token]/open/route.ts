@@ -13,12 +13,21 @@ type RequestBody = {
   viewer_email?: string;
   viewerEmail?: string;
   email?: string;
+  session_id?: string;
+  sessionId?: string;
 };
+
+// 30分ルールのフォールバック用
+const THIRTY_MINUTES_MS = 30 * 60 * 1000;
 
 function extractViewerEmail(body: RequestBody): string {
   return String(body.viewer_email ?? body.viewerEmail ?? body.email ?? "")
     .trim()
     .toLowerCase();
+}
+
+function extractSessionId(body: RequestBody): string {
+  return String(body.session_id ?? body.sessionId ?? "").trim();
 }
 
 export async function POST(request: NextRequest, context: RouteContext) {
@@ -33,6 +42,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
     const body = (await request.json().catch(() => ({}))) as RequestBody;
     const viewerEmail = extractViewerEmail(body);
+    const sessionId = extractSessionId(body);
+
     if (!viewerEmail) {
       return NextResponse.json(
         { error: "viewer_email は必須です" },
@@ -104,7 +115,39 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
     const nowIso = new Date().toISOString();
 
-    // 開封イベント記録
+    // 既存のセッション情報を確認
+    const { data: existing } = await supabase
+      .from("pdf_open_events")
+      .select("last_session_id, last_seen_at")
+      .eq("pdf_send_log_id", sendLog.id)
+      .eq("viewer_email", viewerEmail)
+      .maybeSingle();
+
+    // セッション判定（session_idがあれば正確に、なければ30分ルール）
+    let isNewSession: boolean;
+    if (sessionId) {
+      // session_idがある場合: 正確に判定
+      isNewSession =
+        !existing?.last_session_id || existing.last_session_id !== sessionId;
+    } else {
+      // session_idがない場合: 30分ルールでフォールバック
+      const lastSeen = existing?.last_seen_at;
+      isNewSession =
+        !lastSeen ||
+        Date.now() - new Date(lastSeen).getTime() > THIRTY_MINUTES_MS;
+    }
+
+    // 新規セッションなら閲覧回数をインクリメント
+    if (isNewSession) {
+      const { error: rpcError } = await supabase.rpc("increment_open_count", {
+        log_id: sendLog.id,
+      });
+      if (rpcError) {
+        console.error("[pdf/open] increment_open_count failed", rpcError);
+      }
+    }
+
+    // 開封イベント記録（session_idを含める）
     const { error: upsertError } = await supabase
       .from("pdf_open_events")
       .upsert(
@@ -113,11 +156,12 @@ export async function POST(request: NextRequest, context: RouteContext) {
           pdf_send_log_id: sendLog.id,
           pdf_id: sendLog.pdf_id,
           viewer_email: viewerEmail,
-          opened_at: nowIso,
+          opened_at: existing ? undefined : nowIso, // 初回のみ設定
           last_seen_at: nowIso,
-          read_percentage_max: 0,
-          max_page_reached: 1,
-          elapsed_seconds_max: 0,
+          read_percentage_max: existing ? undefined : 0,
+          max_page_reached: existing ? undefined : 1,
+          elapsed_seconds_max: existing ? undefined : 0,
+          last_session_id: sessionId || null,
         },
         { onConflict: "pdf_send_log_id,viewer_email", ignoreDuplicates: false },
       );

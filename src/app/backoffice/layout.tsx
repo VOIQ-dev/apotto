@@ -1,4 +1,4 @@
-export const runtime = 'nodejs';
+export const runtime = "nodejs";
 
 export default function BackofficeLayout({
   children,
@@ -6,13 +6,6 @@ export default function BackofficeLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      {children}
-    </div>
+    <div className="min-h-screen bg-background text-foreground">{children}</div>
   );
 }
-
-
-
-
-

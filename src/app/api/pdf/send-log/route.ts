@@ -154,14 +154,6 @@ export async function POST(request: NextRequest) {
       url: `${baseUrl}/pdf/${row.token}`,
     }));
 
-    // ログ出力
-    console.log("[pdf/send-log] 閲覧用URL一覧:");
-    viewUrls.forEach((item, index) => {
-      console.log(
-        `  [${index + 1}] ${item.recipient_company_name || "(企業名なし)"} (${item.recipient_email || "(メールなし)"}) → ${item.url}`,
-      );
-    });
-
     // Increment daily metrics (sent_count) grouped by day+pdf
     const grouped = new Map<
       string,

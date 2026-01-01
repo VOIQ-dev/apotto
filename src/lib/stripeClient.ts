@@ -1,8 +1,8 @@
-import Stripe from 'stripe';
-import { isStripeEnabled } from './featureFlags';
-import { createSupabaseServiceClient } from './supabaseServer';
+import Stripe from "stripe";
+import { isStripeEnabled } from "./featureFlags";
+import { createSupabaseServiceClient } from "./supabaseServer";
 
-type PlanInterval = '3m' | '6m' | '12m';
+type PlanInterval = "3m" | "6m" | "12m";
 
 type CheckoutInput = {
   companyId: string;
@@ -16,21 +16,22 @@ type CheckoutSession = {
   enabled: boolean;
 };
 
-const stripeApiVersion = '2025-11-17.clover' satisfies Stripe.StripeConfig['apiVersion'];
+const stripeApiVersion =
+  "2025-11-17.clover" satisfies Stripe.StripeConfig["apiVersion"];
 
 function getStripe(): Stripe {
   const secret = process.env.STRIPE_SECRET_KEY;
   if (!secret) {
-    throw new Error('STRIPE_SECRET_KEY が未設定です');
+    throw new Error("STRIPE_SECRET_KEY が未設定です");
   }
   return new Stripe(secret, { apiVersion: stripeApiVersion });
 }
 
 function priceIdForInterval(interval: PlanInterval): string {
   const mapping: Record<PlanInterval, string | undefined> = {
-    '3m': process.env.STRIPE_PRICE_ID_3M,
-    '6m': process.env.STRIPE_PRICE_ID_6M,
-    '12m': process.env.STRIPE_PRICE_ID_12M,
+    "3m": process.env.STRIPE_PRICE_ID_3M,
+    "6m": process.env.STRIPE_PRICE_ID_6M,
+    "12m": process.env.STRIPE_PRICE_ID_12M,
   };
   const price = mapping[interval];
   if (!price) throw new Error(`Price ID for ${interval} が未設定です`);
@@ -38,17 +39,19 @@ function priceIdForInterval(interval: PlanInterval): string {
 }
 
 function resolveBaseUrl() {
-  return process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+  return process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 }
 
 /**
  * Stripe未設定時はモックレスポンスを返す。
  */
-export async function createCheckoutSession(input: CheckoutInput): Promise<CheckoutSession> {
+export async function createCheckoutSession(
+  input: CheckoutInput,
+): Promise<CheckoutSession> {
   if (!isStripeEnabled()) {
     return {
-      id: 'test_session_mock',
-      url: '/billing/success?session_id=test_session_mock&mode=disabled',
+      id: "test_session_mock",
+      url: "/billing/success?session_id=test_session_mock&mode=disabled",
       enabled: false,
     };
   }
@@ -58,7 +61,7 @@ export async function createCheckoutSession(input: CheckoutInput): Promise<Check
   const baseUrl = resolveBaseUrl();
 
   const params: Stripe.Checkout.SessionCreateParams = {
-    mode: 'subscription',
+    mode: "subscription",
     success_url: `${baseUrl}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${baseUrl}/billing/cancel`,
     customer_email: input.email,
@@ -90,80 +93,100 @@ export async function createCheckoutSession(input: CheckoutInput): Promise<Check
 
   return {
     id: session.id,
-    url: session.url ?? '',
+    url: session.url ?? "",
     enabled: true,
   };
 }
 
 type WebhookResult = { ok: boolean };
 
-function intervalFromSubscription(sub: Stripe.Subscription): PlanInterval | null {
+function intervalFromSubscription(
+  sub: Stripe.Subscription,
+): PlanInterval | null {
   const item = sub.items.data[0];
   const interval = item?.plan?.interval;
   const count = item?.plan?.interval_count ?? 1;
-  if (interval === 'month') {
-    if (count === 3) return '3m';
-    if (count === 6) return '6m';
-    if (count === 12) return '12m';
+  if (interval === "month") {
+    if (count === 3) return "3m";
+    if (count === 6) return "6m";
+    if (count === 12) return "12m";
   }
-  if (interval === 'year') return '12m';
+  if (interval === "year") return "12m";
   return null;
 }
 
-async function upsertSubscriptionFromStripe(sub: Stripe.Subscription, metadata?: Record<string, string | undefined>) {
+async function upsertSubscriptionFromStripe(
+  sub: Stripe.Subscription,
+  metadata?: Record<string, string | undefined>,
+) {
   const companyId = metadata?.companyId || sub.metadata?.companyId;
   const email = metadata?.email || sub.metadata?.email;
   if (!companyId) {
-    console.warn('[stripe] companyId missing on subscription', sub.id);
+    console.warn("[stripe] companyId missing on subscription", sub.id);
     return;
   }
 
   const planInterval =
-    (metadata?.planInterval as PlanInterval) || (sub.metadata?.planInterval as PlanInterval) || intervalFromSubscription(sub);
+    (metadata?.planInterval as PlanInterval) ||
+    (sub.metadata?.planInterval as PlanInterval) ||
+    intervalFromSubscription(sub);
 
   // 最新APIで型から落ちているフィールドを安全に参照
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const anySub = sub as any;
-  const currentPeriodStart = anySub.current_period_start as number | null | undefined;
-  const currentPeriodEnd = anySub.current_period_end as number | null | undefined;
+  const currentPeriodStart = anySub.current_period_start as
+    | number
+    | null
+    | undefined;
+  const currentPeriodEnd = anySub.current_period_end as
+    | number
+    | null
+    | undefined;
   const canceledAt = anySub.canceled_at as number | null | undefined;
   const cancelAtPeriodEnd = anySub.cancel_at_period_end as boolean | undefined;
   const trialEnd = anySub.trial_end as number | null | undefined;
 
   const supabase = createSupabaseServiceClient();
-  await supabase.from('subscriptions').upsert(
+  await supabase.from("subscriptions").upsert(
     {
       company_id: companyId,
-      stripe_customer_id: typeof sub.customer === 'string' ? sub.customer : null,
+      stripe_customer_id:
+        typeof sub.customer === "string" ? sub.customer : null,
       stripe_subscription_id: sub.id,
-      plan_interval: planInterval ?? '3m',
+      plan_interval: planInterval ?? "3m",
       status: sub.status,
       trial_ends_at: trialEnd ? new Date(trialEnd * 1000).toISOString() : null,
-      current_period_start: currentPeriodStart ? new Date(currentPeriodStart * 1000).toISOString() : null,
-      current_period_end: currentPeriodEnd ? new Date(currentPeriodEnd * 1000).toISOString() : null,
+      current_period_start: currentPeriodStart
+        ? new Date(currentPeriodStart * 1000).toISOString()
+        : null,
+      current_period_end: currentPeriodEnd
+        ? new Date(currentPeriodEnd * 1000).toISOString()
+        : null,
       cancel_at_period_end: cancelAtPeriodEnd ?? false,
-      canceled_at: canceledAt ? new Date(canceledAt * 1000).toISOString() : null,
+      canceled_at: canceledAt
+        ? new Date(canceledAt * 1000).toISOString()
+        : null,
       updated_at: new Date().toISOString(),
     },
-    { onConflict: 'stripe_subscription_id' }
+    { onConflict: "stripe_subscription_id" },
   );
 
   // 自動アカウント発行（存在しない場合のみ招待状態で作成）
   if (email) {
     const { data: existing } = await supabase
-      .from('accounts')
-      .select('id')
-      .eq('company_id', companyId)
-      .eq('email', email)
+      .from("accounts")
+      .select("id")
+      .eq("company_id", companyId)
+      .eq("email", email)
       .maybeSingle();
 
     if (!existing) {
-      await supabase.from('accounts').insert({
+      await supabase.from("accounts").insert({
         company_id: companyId,
         email,
-        status: 'invited',
+        status: "invited",
         invited_at: new Date().toISOString(),
-        role: 'admin',
+        role: "admin",
       });
     }
   }
@@ -172,28 +195,38 @@ async function upsertSubscriptionFromStripe(sub: Stripe.Subscription, metadata?:
 /**
  * Webhookハンドラ。Stripe無効時は何もしない。
  */
-export async function handleStripeWebhook(payload: string, signature: string | null): Promise<WebhookResult> {
+export async function handleStripeWebhook(
+  payload: string,
+  signature: string | null,
+): Promise<WebhookResult> {
   if (!isStripeEnabled()) {
     return { ok: true };
   }
 
   const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
   if (!endpointSecret) {
-    throw new Error('STRIPE_WEBHOOK_SECRET が未設定です');
+    throw new Error("STRIPE_WEBHOOK_SECRET が未設定です");
   }
 
   const stripe = getStripe();
   if (!signature) {
-    throw new Error('Stripe-Signature ヘッダがありません');
+    throw new Error("Stripe-Signature ヘッダがありません");
   }
 
-  const event = stripe.webhooks.constructEvent(payload, signature, endpointSecret);
+  const event = stripe.webhooks.constructEvent(
+    payload,
+    signature,
+    endpointSecret,
+  );
 
   switch (event.type) {
-    case 'checkout.session.completed': {
+    case "checkout.session.completed": {
       const session = event.data.object as Stripe.Checkout.Session;
       if (session.subscription) {
-        const subId = typeof session.subscription === 'string' ? session.subscription : session.subscription.id;
+        const subId =
+          typeof session.subscription === "string"
+            ? session.subscription
+            : session.subscription.id;
         const sub = await stripe.subscriptions.retrieve(subId);
         await upsertSubscriptionFromStripe(sub, {
           companyId: session.metadata?.companyId,
@@ -203,9 +236,9 @@ export async function handleStripeWebhook(payload: string, signature: string | n
       }
       break;
     }
-    case 'customer.subscription.created':
-    case 'customer.subscription.updated':
-    case 'customer.subscription.deleted': {
+    case "customer.subscription.created":
+    case "customer.subscription.updated":
+    case "customer.subscription.deleted": {
       const sub = event.data.object as Stripe.Subscription;
       await upsertSubscriptionFromStripe(sub, sub.metadata);
       break;
@@ -217,8 +250,3 @@ export async function handleStripeWebhook(payload: string, signature: string | n
 
   return { ok: true };
 }
-
-
-
-
-

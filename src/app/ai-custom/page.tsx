@@ -9,8 +9,11 @@ import {
   useState,
   type ChangeEvent,
 } from "react";
+import { flushSync } from "react-dom";
 import { read, utils } from "xlsx";
 import { AgGridReact } from "ag-grid-react";
+import { Download, RefreshCw, Trash2 } from "lucide-react";
+import { Tooltip, Modal, Button } from "@mantine/core";
 import type {
   ColDef,
   GridApi,
@@ -58,6 +61,11 @@ type SenderProfile = {
   firstNameKana: string; // 名（ふりがな）
   email: string;
   phone: string;
+  postalCode: string; // 郵便番号
+  prefecture: string; // 都道府県
+  city: string; // 市区町村
+  address: string; // 住所（番地以降）
+  building: string; // 建物名
   subject: string;
   meetingUrl: string; // 商談日程URL（任意）
 };
@@ -73,6 +81,7 @@ type CompanyCardField =
 
 type CompanyCard = {
   id: string;
+  leadId?: string; // リードIDを保持（送信結果のDB更新に使用）
   companyName: string;
   contactName: string;
   department: string;
@@ -90,7 +99,7 @@ type SendResultRow = {
   companyName: string;
   homepageUrl: string;
   email: string;
-  status: "success" | "failed";
+  status: "success" | "failed" | "blocked";
   sentAtIso: string;
 };
 
@@ -98,7 +107,7 @@ type LeadRow = {
   id: string;
   companyName: string;
   homepageUrl: string;
-  sendStatus: "pending" | "success" | "failed";
+  sendStatus: "pending" | "success" | "failed" | "blocked";
   intentScore: number | null;
   isAppointed: boolean;
   isNg: boolean;
@@ -159,6 +168,11 @@ const SENDER_FIELD_LABELS: Record<keyof SenderProfile, string> = {
   firstNameKana: "名（ふりがな）",
   email: "メールアドレス",
   phone: "電話番号",
+  postalCode: "郵便番号",
+  prefecture: "都道府県",
+  city: "市区町村",
+  address: "住所（番地以降）",
+  building: "建物名",
   subject: "件名",
   meetingUrl: "商談日程URL（任意）",
 };
@@ -193,12 +207,13 @@ export default function AiCustomPage() {
   );
   const [restoredSender, setRestoredSender] = useState(false);
   const [restoredProduct, setRestoredProduct] = useState(false);
-  const [autoSendEnabled, setAutoSendEnabled] = useState(false);
   const [autoRunStatus, setAutoRunStatus] = useState<
     "idle" | "running" | "error" | "done"
   >("idle");
   const [autoRunMessage, setAutoRunMessage] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [toastType, setToastType] = useState<"error" | "warning" | "success">(
     "error",
@@ -330,9 +345,6 @@ export default function AiCustomPage() {
     [pdfAssets, selectedPdfIds],
   );
 
-  // CSV取り込みを PDF 選択なしでも許可（送信時にPDF未選択なら警告）
-  const canUploadCsv = senderMissingFields.length === 0 && productContextFilled;
-
   // リード一覧取得
   const fetchLeads = useCallback(
     async (page = 1) => {
@@ -346,7 +358,11 @@ export default function AiCustomPage() {
             id: String(l.id),
             companyName: String(l.company_name ?? ""),
             homepageUrl: String(l.homepage_url ?? ""),
-            sendStatus: l.send_status as "pending" | "success" | "failed",
+            sendStatus: l.send_status as
+              | "pending"
+              | "success"
+              | "failed"
+              | "blocked",
             intentScore: l.intentScore as number | null,
             isAppointed: Boolean(l.is_appointed),
             isNg: Boolean(l.is_ng),
@@ -429,7 +445,9 @@ export default function AiCustomPage() {
 
   const sendSummary = useMemo(() => {
     const success = sendResults.filter((r) => r.status === "success").length;
-    const failed = sendResults.filter((r) => r.status === "failed").length;
+    const failed = sendResults.filter(
+      (r) => r.status === "failed" || r.status === "blocked",
+    ).length;
     return { total: sendResults.length, success, failed };
   }, [sendResults]);
 
@@ -437,8 +455,6 @@ export default function AiCustomPage() {
   const leadColumnDefs = useMemo<ColDef<LeadRow>[]>(
     () => [
       {
-        headerCheckboxSelection: true,
-        checkboxSelection: true,
         width: 50,
         minWidth: 50,
         pinned: "left",
@@ -475,6 +491,7 @@ export default function AiCustomPage() {
         cellRenderer: (params: { value: string }) => {
           if (params.value === "success") return "成功";
           if (params.value === "failed") return "失敗";
+          if (params.value === "blocked") return "送信不可";
           return "-";
         },
       },
@@ -594,9 +611,17 @@ export default function AiCustomPage() {
     console.debug("[rowDragEnd]", event);
   }, []);
 
-  // リードCSVエクスポート
+  // リードCSVエクスポート（AgGrid公式API使用 - 全データ出力）
   const handleExportLeadsCsv = useCallback(() => {
-    window.location.href = "/api/leads/export";
+    if (!gridApiRef.current) {
+      console.warn("Grid API is not ready");
+      return;
+    }
+
+    gridApiRef.current.exportDataAsCsv({
+      fileName: `leads_${new Date().toISOString().slice(0, 10)}.csv`,
+      exportedRows: "all", // ページネーション関係なく全データをエクスポート
+    });
   }, []);
 
   const enqueueGeneration = useCallback((ids: string[], replace = false) => {
@@ -852,13 +877,6 @@ export default function AiCustomPage() {
   }, [handleGenerateEntry, queueState.pendingIds, queueState.running]);
 
   useEffect(() => {
-    if (!autoSendEnabled) {
-      setAutoRunStatus("idle");
-      setAutoRunMessage(null);
-    }
-  }, [autoSendEnabled]);
-
-  useEffect(() => {
     if (autoRunStatus === "done") {
       const timer = setTimeout(() => {
         setAutoRunStatus("idle");
@@ -946,6 +964,11 @@ export default function AiCustomPage() {
             `${senderProfile.lastNameKana} ${senderProfile.firstNameKana}`.trim(),
           email: senderProfile.email,
           phone: senderProfile.phone,
+          postalCode: senderProfile.postalCode,
+          prefecture: senderProfile.prefecture,
+          city: senderProfile.city,
+          address: senderProfile.address,
+          building: senderProfile.building,
           subject,
           message: body,
           debug: false, // 本番環境ではヘッドレスモード
@@ -1060,6 +1083,11 @@ export default function AiCustomPage() {
               `${senderProfile.lastNameKana} ${senderProfile.firstNameKana}`.trim(),
             email: senderProfile.email,
             phone: senderProfile.phone,
+            postalCode: senderProfile.postalCode,
+            prefecture: senderProfile.prefecture,
+            city: senderProfile.city,
+            address: senderProfile.address,
+            building: senderProfile.building,
             subject,
             message: body,
           },
@@ -1129,9 +1157,32 @@ export default function AiCustomPage() {
                       }),
                     });
                   }
+                  // リードの送信結果をDBに更新
+                  if (item.card.leadId) {
+                    await fetch(`/api/leads/${item.card.leadId}`, {
+                      method: "PATCH",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ sendStatus: "success" }),
+                    });
+                  }
                 } else {
                   failedCount++;
-                  pushLog(`送信失敗: ${label}`);
+                  // CAPTCHA検出の場合は blocked、それ以外は failed
+                  const isCaptcha = data.note === "CAPTCHA detected";
+                  const newStatus = isCaptcha ? "blocked" : "failed";
+                  pushLog(
+                    isCaptcha
+                      ? `送信不可（CAPTCHA）: ${label}`
+                      : `送信失敗: ${label}`,
+                  );
+                  // リードの送信結果をDBに更新
+                  if (item.card.leadId) {
+                    await fetch(`/api/leads/${item.card.leadId}`, {
+                      method: "PATCH",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ sendStatus: newStatus }),
+                    });
+                  }
                 }
                 setSendResults((prev) => [
                   ...prev,
@@ -1139,7 +1190,11 @@ export default function AiCustomPage() {
                     companyName: item.card.companyName || label,
                     homepageUrl: item.card.homepageUrl,
                     email: item.card.email,
-                    status: data.success ? "success" : "failed",
+                    status: data.success
+                      ? "success"
+                      : data.note === "CAPTCHA detected"
+                        ? "blocked"
+                        : "failed",
                     sentAtIso: item.sentAtIso,
                   },
                 ]);
@@ -1184,24 +1239,41 @@ export default function AiCustomPage() {
       }
 
       resetSendResults();
-      setIsSending(true);
+
+      // flushSync で即座に UI を更新
+      flushSync(() => {
+        setIsSending(true);
+      });
+
       pushLog(`送信を開始します（${targets.length}件）`);
 
       try {
         await handleBatchSend(targets, origin);
         setLastSendFinishedAt(new Date().toISOString());
+        // 送信結果を反映するためAgGridを再読み込み
+        await fetchLeads(leadsPage);
       } catch {
         pushLog("送信処理でエラーが発生しました。");
       } finally {
         setIsSending(false);
       }
     },
-    [handleBatchSend, pushLog, resetSendResults, sendableReadyCards],
+    [
+      handleBatchSend,
+      pushLog,
+      resetSendResults,
+      sendableReadyCards,
+      fetchLeads,
+      leadsPage,
+    ],
   );
 
   const runAutoWorkflow = useCallback(
-    async (cardSnapshots: CompanyCard[]) => {
-      if (!autoSendEnabled || !cardSnapshots.length) return;
+    async (
+      cardSnapshots: CompanyCard[],
+      skipSendLeadIds: Set<string> = new Set(),
+    ) => {
+      if (!cardSnapshots.length) return;
       if (autoRunStatus === "running") return;
 
       const origin =
@@ -1217,6 +1289,14 @@ export default function AiCustomPage() {
       pushLog(
         `⚡ 自動送信を開始します（${cardSnapshots.length}件）- AI生成と送信を並行実行`,
       );
+
+      // 文面作成状況に待機中の件数を表示
+      const cardIds = cardSnapshots.map((c) => c.id);
+      setQueueState((prev) => ({
+        ...prev,
+        pendingIds: cardIds,
+        running: true,
+      }));
 
       try {
         // 送信待ちキュー
@@ -1263,6 +1343,9 @@ export default function AiCustomPage() {
             snapshot.homepageUrl;
 
           try {
+            pushLog(
+              `🔄 文面生成開始: ${label} (${index + 1}/${cardSnapshots.length})`,
+            );
             setAutoRunMessage(
               `文面作成中 (${index + 1}/${cardSnapshots.length}): ${label}`,
             );
@@ -1278,20 +1361,47 @@ export default function AiCustomPage() {
               sendEnabled: true,
             };
 
-            readyQueue.push(readyCard);
             totalGenerated++;
             pushLog(
               `✅ 文面生成完了: ${label} (${totalGenerated}/${cardSnapshots.length})`,
             );
 
-            // キューに3件以上溜まったら送信処理を開始
-            if (readyQueue.length >= 3 && !isSendingBatch) {
-              processSendQueue();
+            // 待機中リストから削除
+            setQueueState((prev) => ({
+              ...prev,
+              pendingIds: prev.pendingIds.filter((id) => id !== snapshot.id),
+              lastProcessed: snapshot.id,
+            }));
+
+            // 過去に失敗したリードは送信をスキップ（送信結果には失敗として追加）
+            if (snapshot.leadId && skipSendLeadIds.has(snapshot.leadId)) {
+              failedCount++;
+              setSendResults((prev) => [
+                ...prev,
+                {
+                  companyName: readyCard.companyName || label,
+                  homepageUrl: readyCard.homepageUrl,
+                  email: readyCard.email,
+                  status: "failed" as const,
+                  sentAtIso: new Date().toISOString(),
+                },
+              ]);
+            } else {
+              readyQueue.push(readyCard);
+              // キューに3件以上溜まったら送信処理を開始
+              if (readyQueue.length >= 3 && !isSendingBatch) {
+                processSendQueue();
+              }
             }
           } catch (error) {
             pushLog(
               `❌ 文面生成失敗: ${label} - ${error instanceof Error ? error.message : String(error)}`,
             );
+            // 失敗時も待機中リストから削除
+            setQueueState((prev) => ({
+              ...prev,
+              pendingIds: prev.pendingIds.filter((id) => id !== snapshot.id),
+            }));
           }
         });
 
@@ -1332,19 +1442,34 @@ export default function AiCustomPage() {
 
         setAutoRunStatus("done");
         setAutoRunMessage("自動送信が完了しました。");
+        // キュー状態をリセット
+        setQueueState((prev) => ({
+          ...prev,
+          pendingIds: [],
+          running: false,
+        }));
+        // 送信結果を反映するためAgGridを再読み込み
+        await fetchLeads(leadsPage);
       } catch (error) {
         setAutoRunStatus("error");
         setAutoRunMessage("自動送信でエラーが発生しました。");
         pushLog(
           `自動送信でエラーが発生しました: ${error instanceof Error ? error.message : String(error)}`,
         );
+        // エラー時もキュー状態をリセット
+        setQueueState((prev) => ({
+          ...prev,
+          pendingIds: [],
+          running: false,
+        }));
       }
     },
     [
-      autoSendEnabled,
       autoRunStatus,
       handleBatchSend,
       handleGenerateEntry,
+      fetchLeads,
+      leadsPage,
       pushLog,
       resetSendResults,
     ],
@@ -1352,19 +1477,6 @@ export default function AiCustomPage() {
 
   const handleExcelUpload = useCallback(
     async (file: File) => {
-      if (!canUploadCsv) {
-        setUploadState((prev) => ({
-          ...prev,
-          error:
-            "先にステップ1「自社情報」・ステップ2「商品理解」を完了してください。",
-        }));
-        setLogs((prev) => [
-          ...prev,
-          "⚠️ 自社情報/商品理解が未完了のためCSVを読み込めません。",
-        ]);
-        return;
-      }
-
       setUploadState((prev) => ({
         ...prev,
         fileName: file.name,
@@ -1446,26 +1558,6 @@ export default function AiCustomPage() {
 
         // リード一覧を再取得
         await fetchLeads(1);
-
-        // 初回インポート（データが存在しなかった場合）は自動送信
-        if (importData.isFirstImport && autoSendEnabled) {
-          const first100 = leads.slice(0, 100);
-          if (first100.length > 0) {
-            // 初回は自動で最初の100件を生成・送信
-            const cardsToSend = first100.map((lead) => ({
-              ...createEmptyCard(),
-              companyName: lead.companyName,
-              contactName: lead.contactName,
-              department: lead.department,
-              title: lead.title,
-              email: lead.email,
-              homepageUrl: lead.homepageUrl,
-            }));
-            setTimeout(() => {
-              void runAutoWorkflow(cardsToSend);
-            }, 0);
-          }
-        }
       } catch (error) {
         const message =
           error instanceof Error
@@ -1479,19 +1571,112 @@ export default function AiCustomPage() {
         pushLog("⚠️ Excel/CSVの読み込みに失敗しました。");
       }
     },
-    [
-      autoSendEnabled,
-      canUploadCsv,
-      fetchLeads,
-      leads,
-      pushLog,
-      runAutoWorkflow,
-      showToast,
-    ],
+    [fetchLeads, pushLog, showToast],
   );
 
-  // 選択したリードからカードを生成して送信
-  const handleSendSelectedLeads = useCallback(async () => {
+  // 選択したリードからAI文言を生成（送信しない）- 並列処理
+  const handleGenerateSelectedLeads = useCallback(async () => {
+    if (selectedLeadIds.size === 0) {
+      showToast("生成する企業を選択してください", "warning");
+      return;
+    }
+
+    if (selectedLeadIds.size > 100) {
+      showToast("一度に生成できるのは100件までです", "warning");
+      return;
+    }
+
+    if (queueState.running) return;
+
+    const selectedLeads = leads.filter((lead) => selectedLeadIds.has(lead.id));
+
+    // カードを生成
+    const cardsToGenerate = selectedLeads.map((lead) => ({
+      ...createEmptyCard(),
+      leadId: lead.id,
+      companyName: lead.companyName,
+      contactName: lead.contactName,
+      department: lead.department,
+      title: lead.title,
+      email: lead.email,
+      homepageUrl: lead.homepageUrl,
+    }));
+
+    setCards(cardsToGenerate);
+    pushLog(`${cardsToGenerate.length}件のAI文言生成を開始しました`);
+
+    // 文面作成状況に待機中の件数を表示
+    const cardIds = cardsToGenerate.map((c) => c.id);
+    setQueueState((prev) => ({
+      ...prev,
+      pendingIds: cardIds,
+      running: true,
+    }));
+
+    let totalGenerated = 0;
+
+    // AI生成タスク（並行実行）
+    const generateTasks = cardsToGenerate.map(async (snapshot, index) => {
+      const label =
+        snapshot.companyName || snapshot.contactName || snapshot.homepageUrl;
+
+      try {
+        pushLog(
+          `🔄 文面生成開始: ${label} (${index + 1}/${cardsToGenerate.length})`,
+        );
+        await handleGenerateEntry(snapshot.id, snapshot);
+
+        totalGenerated++;
+        pushLog(
+          `✅ 文面生成完了: ${label} (${totalGenerated}/${cardsToGenerate.length})`,
+        );
+
+        // 待機中リストから削除
+        setQueueState((prev) => ({
+          ...prev,
+          pendingIds: prev.pendingIds.filter((id) => id !== snapshot.id),
+          lastProcessed: snapshot.id,
+        }));
+      } catch (error) {
+        pushLog(
+          `❌ 文面生成失敗: ${label} - ${error instanceof Error ? error.message : String(error)}`,
+        );
+        // 失敗時も待機中リストから削除
+        setQueueState((prev) => ({
+          ...prev,
+          pendingIds: prev.pendingIds.filter((id) => id !== snapshot.id),
+        }));
+      }
+    });
+
+    // すべてのAI生成タスクを並行実行（最大3つ同時）
+    const concurrencyLimit = 3;
+    for (let i = 0; i < generateTasks.length; i += concurrencyLimit) {
+      const chunk = generateTasks.slice(i, i + concurrencyLimit);
+      await Promise.all(chunk);
+    }
+
+    // 完了時にキュー状態をリセット
+    setQueueState((prev) => ({
+      ...prev,
+      pendingIds: [],
+      running: false,
+    }));
+
+    pushLog(
+      `🎉 AI文言生成完了（${totalGenerated}/${cardsToGenerate.length}件）`,
+    );
+  }, [
+    handleGenerateEntry,
+    leads,
+    pushLog,
+    queueState.running,
+    selectedLeadIds,
+    showToast,
+  ]);
+
+  // 選択したリードからAI文言を生成して送信
+  const handleGenerateAndSendSelectedLeads = useCallback(() => {
     if (selectedLeadIds.size === 0) {
       showToast("送信する企業を選択してください", "warning");
       return;
@@ -1504,9 +1689,20 @@ export default function AiCustomPage() {
 
     const selectedLeads = leads.filter((lead) => selectedLeadIds.has(lead.id));
 
-    // カードを生成
+    // 失敗済み・ブロック済みのリードIDを記録（送信時にスキップするため）
+    const skipLeadIds = new Set(
+      selectedLeads
+        .filter(
+          (lead) =>
+            lead.sendStatus === "failed" || lead.sendStatus === "blocked",
+        )
+        .map((lead) => lead.id),
+    );
+
+    // 全てのリードでカードを生成（文言生成は全て行う）
     const cardsToSend = selectedLeads.map((lead) => ({
       ...createEmptyCard(),
+      leadId: lead.id,
       companyName: lead.companyName,
       contactName: lead.contactName,
       department: lead.department,
@@ -1516,29 +1712,33 @@ export default function AiCustomPage() {
     }));
 
     setCards(cardsToSend);
+    pushLog(`${cardsToSend.length}件のAI文言生成を開始しました`);
+    setTimeout(() => {
+      void runAutoWorkflow(cardsToSend, skipLeadIds);
+    }, 0);
+  }, [leads, pushLog, runAutoWorkflow, selectedLeadIds, showToast]);
 
-    if (autoSendEnabled) {
-      // 自動送信モード: 生成→送信を順次実行
-      setTimeout(() => {
-        void runAutoWorkflow(cardsToSend);
-      }, 0);
-    } else {
-      // 手動モード: 生成キューに追加
-      enqueueGeneration(
-        cardsToSend.map((c) => c.id),
-        true,
+  // 選択したリードを削除
+  const handleDeleteSelectedLeads = useCallback(async () => {
+    if (selectedLeadIds.size === 0) return;
+
+    setIsDeleting(true);
+    try {
+      const deletePromises = Array.from(selectedLeadIds).map((id) =>
+        fetch(`/api/leads/${id}`, { method: "DELETE" }),
       );
-      pushLog(`${cardsToSend.length}件のカードを生成キューに追加しました`);
+      await Promise.all(deletePromises);
+      showToast(`${selectedLeadIds.size}件のリードを削除しました`, "success");
+      setSelectedLeadIds(new Set());
+      await fetchLeads(leadsPage);
+    } catch (error) {
+      console.error("Delete error:", error);
+      showToast("削除に失敗しました", "error");
+    } finally {
+      setIsDeleting(false);
+      setIsDeleteModalOpen(false);
     }
-  }, [
-    autoSendEnabled,
-    enqueueGeneration,
-    leads,
-    pushLog,
-    runAutoWorkflow,
-    selectedLeadIds,
-    showToast,
-  ]);
+  }, [selectedLeadIds, showToast, fetchLeads, leadsPage]);
 
   const handleFileInputChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
@@ -1568,13 +1768,12 @@ export default function AiCustomPage() {
       e.preventDefault();
       e.stopPropagation();
       setIsDragging(false);
-      if (!canUploadCsv) return;
       const file = e.dataTransfer.files?.[0];
       if (file) {
         void handleExcelUpload(file);
       }
     },
-    [handleExcelUpload, canUploadCsv],
+    [handleExcelUpload],
   );
 
   const downloadSampleCsv = useCallback((e: React.MouseEvent) => {
@@ -1758,6 +1957,44 @@ export default function AiCustomPage() {
               value={senderProfile.phone}
               onChange={(value) => handleSenderProfileChange("phone", value)}
             />
+            <InputField
+              label="郵便番号"
+              placeholder="例: 100-0001"
+              value={senderProfile.postalCode}
+              onChange={(value) =>
+                handleSenderProfileChange("postalCode", value)
+              }
+            />
+            <InputField
+              label="都道府県"
+              placeholder="例: 東京都"
+              value={senderProfile.prefecture}
+              onChange={(value) =>
+                handleSenderProfileChange("prefecture", value)
+              }
+            />
+            <InputField
+              label="市区町村"
+              placeholder="例: 千代田区"
+              value={senderProfile.city}
+              onChange={(value) => handleSenderProfileChange("city", value)}
+            />
+            <InputField
+              label="住所（番地以降）"
+              placeholder="例: 千代田1-1"
+              value={senderProfile.address}
+              onChange={(value) => handleSenderProfileChange("address", value)}
+            />
+            <div className="sm:col-span-2">
+              <InputField
+                label="建物名"
+                placeholder="例: 〇〇ビル 5F"
+                value={senderProfile.building}
+                onChange={(value) =>
+                  handleSenderProfileChange("building", value)
+                }
+              />
+            </div>
             <div className="sm:col-span-2">
               <InputField
                 label="件名"
@@ -1883,14 +2120,20 @@ export default function AiCustomPage() {
               選択した資料は送信時に自動で専用URLへ変換され、本文にリンクとして差し込まれます。
             </p>
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => void fetchPdfLibrary()}
-                className="btn-secondary text-xs"
-                disabled={pdfLibraryLoading}
-              >
-                {pdfLibraryLoading ? "更新中..." : "再読み込み"}
-              </button>
+              <Tooltip label="再読み込み" position="top" withArrow>
+                <button
+                  type="button"
+                  onClick={() => void fetchPdfLibrary()}
+                  className="btn-secondary text-xs p-2"
+                  disabled={pdfLibraryLoading}
+                  aria-label="再読み込み"
+                >
+                  <RefreshCw
+                    size={16}
+                    className={pdfLibraryLoading ? "animate-spin" : ""}
+                  />
+                </button>
+              </Tooltip>
               <Link href="/pdf-assets" className="btn-primary text-xs">
                 PDF管理へ
               </Link>
@@ -1956,187 +2199,162 @@ export default function AiCustomPage() {
           )}
         </section>
 
+        {/* リード管理 */}
         <section className="card-clean p-8">
-          <div className="flex items-center justify-between mb-6">
-            <SectionHeader number="04" title="Excel / CSV 取り込み" />
-            <button
-              type="button"
-              onClick={handleManualCardAdd}
-              className="btn-secondary text-xs"
-              disabled={!canUploadCsv}
-            >
-              + カードを手動追加
-            </button>
-          </div>
-
-          {!canUploadCsv && (
-            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-              先にステップ1「自社情報」とステップ2「商品理解」を完了すると、CSV取り込みが有効になります。
-            </div>
-          )}
-
-          <div className="mt-2 mb-6 rounded-lg bg-blue-50/50 border border-blue-100 p-4 text-sm text-blue-700">
-            <p className="font-semibold mb-1">フォーマット仕様</p>
-            <p>
-              1列目: 企業名（必須）/ 2列目: URL（必須）/ 3列目: 担当者名 /
-              4列目: 部署名 / 5列目: 役職名 / 6列目: メールアドレス
-            </p>
-          </div>
-
-          <div className="mb-6 rounded-xl border border-border bg-muted/20 p-4">
-            <label className="flex items-center gap-3 text-sm font-medium text-foreground">
-              <input
-                type="checkbox"
-                className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
-                checked={autoSendEnabled}
-                onChange={(event) => setAutoSendEnabled(event.target.checked)}
-              />
-              AI生成後に自動でフォーム送信まで行う
-            </label>
-            <p className="text-xs text-muted-foreground mt-2">
-              チェック時はAI文章生成からフォーム送信までをブラウザ上で連続実行します。処理中にページを閉じると中断されます。
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-            <p className="text-xs text-muted-foreground">
-              CSV / Excelテンプレートは右のボタンからダウンロードできます。
-            </p>
-            <button
-              type="button"
-              onClick={downloadSampleCsv}
-              className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:text-primary/80 hover:underline"
-              disabled={!canUploadCsv}
-            >
-              <svg
-                className="w-3.5 h-3.5"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-                />
-              </svg>
-              サンプルデータをダウンロード
-            </button>
-          </div>
-
-          <label
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-            className={`dropzone group relative flex cursor-pointer flex-col items-center justify-center rounded-xl px-4 py-10 text-center ${
-              isDragging ? "is-active" : ""
-            }`}
-            aria-disabled={!canUploadCsv}
-            style={
-              !canUploadCsv
-                ? { opacity: 0.5, pointerEvents: "none" }
-                : undefined
-            }
-          >
-            <input
-              type="file"
-              accept=".xlsx,.xls,.csv"
-              onChange={handleFileInputChange}
-              className="sr-only"
-              disabled={!canUploadCsv}
+          <div className="mb-8">
+            <SectionHeader
+              number="04"
+              title="リード管理"
+              description="CSVをインポートしてリードを管理します。送信したい行を選択してください。"
             />
-            <div
-              className={`flex h-12 w-12 items-center justify-center rounded-full mb-3 transition-colors ${
+          </div>
+
+          {/* CSVインポートエリア（コンパクト版） */}
+          <div className="mb-6">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-sm font-semibold text-foreground">
+                CSVから一括登録
+              </p>
+              <button
+                type="button"
+                onClick={downloadSampleCsv}
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:text-primary/80 hover:underline"
+              >
+                <svg
+                  className="w-3.5 h-3.5"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                  />
+                </svg>
+                サンプルをダウンロード
+              </button>
+            </div>
+
+            <label
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              className={`dropzone group relative flex flex-col cursor-pointer items-center justify-center gap-3 rounded-2xl border-2 border-dashed px-4 py-8 transition-colors ${
                 isDragging
-                  ? "bg-primary/20 text-primary"
-                  : "bg-muted text-muted-foreground group-hover:bg-primary/10 group-hover:text-primary"
+                  ? "border-primary bg-primary/5 is-active"
+                  : "border-border hover:border-primary/50 hover:bg-primary/5"
               }`}
             >
-              <svg
-                className="h-6 w-6"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
+              <input
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                onChange={handleFileInputChange}
+                className="sr-only"
+              />
+              <div
+                className={`flex h-12 w-12 items-center justify-center rounded-full mb-2 transition-colors ${
+                  isDragging
+                    ? "bg-primary/20 text-primary"
+                    : "bg-muted text-muted-foreground group-hover:bg-primary/20 group-hover:text-primary"
+                }`}
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
+                <svg
+                  className="h-6 w-6"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
                   strokeWidth={2}
-                  d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
-                />
-              </svg>
-            </div>
-            <span className="text-sm font-medium text-foreground">
-              ファイルを選択またはドロップ
-            </span>
-            <span className="mt-1 text-xs text-muted-foreground">
-              対応形式: .xlsx / .xls / .csv（最大100行まで）
-            </span>
-          </label>
-
-          {uploadState.fileName && (
-            <div className="mt-4 flex items-center justify-between rounded-lg border border-border bg-muted/30 px-4 py-3">
-              <div>
-                <p className="text-sm font-medium text-foreground">
-                  {uploadState.fileName}
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+                  />
+                </svg>
+              </div>
+              <div className="text-center">
+                <p className="text-base font-semibold text-foreground">
+                  ファイルをここにドラッグ＆ドロップ
                 </p>
-                <p className="text-xs text-muted-foreground">
-                  取り込み: {uploadState.importedCount} / スキップ:{" "}
-                  {uploadState.skippedCount}
+                <p className="text-sm text-muted-foreground mt-1">
+                  またはクリックしてファイルを選択
+                </p>
+                <p className="text-xs text-muted-foreground/70 mt-2">
+                  (.xlsx / .xls / .csv)
                 </p>
               </div>
-              {uploadState.error && (
-                <span className="text-xs text-rose-500">
-                  {uploadState.error}
-                </span>
-              )}
-            </div>
-          )}
+            </label>
 
-          <div className="mt-6 flex gap-3">
-            <button
-              type="button"
-              onClick={handleQueuePendingCards}
-              className="btn-secondary flex-1"
-            >
-              未生成カードを再キュー
-            </button>
-            <button
-              type="button"
-              onClick={handleClearCards}
-              className="btn-secondary flex-1 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200"
-            >
-              カードをリセット
-            </button>
+            <p className="text-xs text-muted-foreground mt-3 text-center">
+              形式: 企業名 / URL / 担当者名 / 部署名 / 役職名 / メールアドレス
+            </p>
+
+            {uploadState.fileName && (
+              <div className="mt-3 flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                <div>
+                  <p className="text-sm font-medium text-foreground">
+                    {uploadState.fileName}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    取り込み: {uploadState.importedCount} / スキップ:{" "}
+                    {uploadState.skippedCount}
+                  </p>
+                </div>
+                {uploadState.error && (
+                  <span className="text-xs text-rose-500">
+                    {uploadState.error}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
-        </section>
 
-        {/* AgGrid リード管理 */}
-        <section className="card-clean p-8">
-          <div className="flex items-center justify-between mb-6">
-            <SectionHeader
-              number="05"
-              title="リード管理"
-              description="インポートしたリードを管理します。送信したい行を選択して「選択行を送信」ボタンを押してください。"
-            />
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={handleExportLeadsCsv}
-                className="btn-secondary text-xs"
-                disabled={leads.length === 0}
-              >
-                CSVエクスポート
-              </button>
-              <button
-                type="button"
-                onClick={() => void fetchLeads(leadsPage)}
-                className="btn-secondary text-xs"
-                disabled={leadsLoading}
-              >
-                {leadsLoading ? "読込中..." : "再読み込み"}
-              </button>
+          {/* テーブル操作ボタン */}
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-sm text-muted-foreground">
+              {leads.length > 0
+                ? `${leads.length}件のリード`
+                : "リードがありません"}
+            </span>
+            <div className="flex items-center gap-2">
+              <Tooltip label="選択したリードを削除" position="top" withArrow>
+                <button
+                  type="button"
+                  onClick={() => setIsDeleteModalOpen(true)}
+                  className="btn-secondary text-xs p-2 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200"
+                  disabled={selectedLeadIds.size === 0}
+                  aria-label="選択したリードを削除"
+                >
+                  <Trash2 size={16} />
+                </button>
+              </Tooltip>
+              <Tooltip label="CSVエクスポート" position="top" withArrow>
+                <button
+                  type="button"
+                  onClick={handleExportLeadsCsv}
+                  className="btn-secondary text-xs p-2"
+                  disabled={leads.length === 0}
+                  aria-label="CSVエクスポート"
+                >
+                  <Download size={16} />
+                </button>
+              </Tooltip>
+              <Tooltip label="再読み込み" position="top" withArrow>
+                <button
+                  type="button"
+                  onClick={() => void fetchLeads(leadsPage)}
+                  className="btn-secondary text-xs p-2"
+                  disabled={leadsLoading}
+                  aria-label="再読み込み"
+                >
+                  <RefreshCw
+                    size={16}
+                    className={leadsLoading ? "animate-spin" : ""}
+                  />
+                </button>
+              </Tooltip>
             </div>
           </div>
 
@@ -2149,9 +2367,12 @@ export default function AiCustomPage() {
               rowData={leads}
               columnDefs={leadColumnDefs}
               defaultColDef={defaultColDef}
-              rowSelection="multiple"
-              suppressRowClickSelection={true}
-              rowDragManaged={true}
+              rowSelection={{
+                mode: "multiRow",
+                checkboxes: true,
+                headerCheckbox: true,
+                enableClickSelection: false,
+              }}
               animateRows={true}
               pagination={true}
               paginationPageSize={100}
@@ -2205,72 +2426,62 @@ export default function AiCustomPage() {
 
               <button
                 type="button"
-                onClick={() => void handleSendSelectedLeads()}
-                disabled={selectedLeadIds.size === 0 || isSending}
-                className="btn-primary"
+                onClick={handleGenerateSelectedLeads}
+                disabled={
+                  selectedLeadIds.size === 0 ||
+                  queueState.running ||
+                  autoRunStatus === "running"
+                }
+                className="btn-secondary min-w-[180px]"
               >
-                {isSending
-                  ? "送信中..."
-                  : `選択行を送信（${selectedLeadIds.size}件）`}
+                {queueState.running || autoRunStatus === "running"
+                  ? "生成中..."
+                  : `AI文言を生成（${selectedLeadIds.size}件）`}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleGenerateAndSendSelectedLeads}
+                disabled={
+                  selectedLeadIds.size === 0 ||
+                  isSending ||
+                  autoRunStatus === "running" ||
+                  queueState.running
+                }
+                className="btn-primary min-w-[180px]"
+              >
+                {isSending || autoRunStatus === "running"
+                  ? "処理中..."
+                  : `生成して送信（${selectedLeadIds.size}件）`}
               </button>
             </div>
           </div>
         </section>
 
-        <section className="space-y-4">
-          <div className="flex items-center justify-between px-2">
-            <SectionHeader number="06" title="企業カード一覧" />
-            <p className="text-sm font-medium text-muted-foreground">
-              <span className="text-primary font-bold">
-                {sendableReadyCards.length}
-              </span>{" "}
-              / {sendableCards.length} 社 OK
-            </p>
-          </div>
-
-          {cards.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-border bg-muted/10 p-12 text-center text-muted-foreground">
-              <p>Excelを取り込むか「カードを追加」してください</p>
-            </div>
-          ) : (
-            <div className="grid gap-6">
-              {cards.map((card) => (
-                <CardItem
-                  key={card.id}
-                  card={card}
-                  pdfAssets={pdfAssets}
-                  selectedPdfIdList={selectedPdfIdList}
-                  handleCardFieldChange={handleCardFieldChange}
-                  handleToggleSendEnabled={handleToggleSendEnabled}
-                  handleMessageChange={handleMessageChange}
-                  handleGenerateEntry={handleGenerateEntry}
-                />
-              ))}
-            </div>
-          )}
-        </section>
-
+        {/* 文面作成状況とログ */}
         <section className="grid gap-6 lg:grid-cols-2">
           <div className="card-clean p-6">
             <div className="flex items-center justify-between mb-4">
-              <SectionHeader number="07" title="自動生成キュー" />
+              <h3 className="text-base font-bold text-foreground">
+                文面作成状況
+              </h3>
               <span className="text-xs font-medium bg-muted px-2 py-1 rounded text-muted-foreground">
-                {queueState.pendingIds.length} pending
+                {queueState.pendingIds.length} 件待機中
               </span>
             </div>
 
             <div className="space-y-4">
               <div className="rounded-lg border border-border bg-muted/30 p-4 text-sm">
                 <div className="flex justify-between mb-1">
-                  <span className="text-muted-foreground">Status:</span>
+                  <span className="text-muted-foreground">状態:</span>
                   <span
                     className={`font-medium ${queueState.running ? "text-primary animate-pulse" : "text-foreground"}`}
                   >
-                    {queueState.running ? "Running..." : "Idle"}
+                    {queueState.running ? "作成中..." : "待機中"}
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Last Processed:</span>
+                  <span className="text-muted-foreground">最後に処理:</span>
                   <span className="text-foreground truncate max-w-[150px]">
                     {queueState.lastProcessed || "-"}
                   </span>
@@ -2394,7 +2605,76 @@ export default function AiCustomPage() {
             </div>
           </div>
         </section>
+
+        <section className="space-y-4">
+          <div className="flex items-center justify-between px-2">
+            <SectionHeader number="05" title="企業カード一覧" />
+            <p className="text-sm font-medium text-muted-foreground">
+              <span className="text-primary font-bold">
+                {sendableReadyCards.length}
+              </span>{" "}
+              / {sendableCards.length} 社 OK
+            </p>
+          </div>
+
+          {cards.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-border bg-muted/10 p-12 text-center text-muted-foreground">
+              <p>Excelを取り込むか「カードを追加」してください</p>
+            </div>
+          ) : (
+            <div className="grid gap-6">
+              {cards.map((card) => (
+                <CardItem
+                  key={card.id}
+                  card={card}
+                  pdfAssets={pdfAssets}
+                  selectedPdfIdList={selectedPdfIdList}
+                  handleCardFieldChange={handleCardFieldChange}
+                  handleToggleSendEnabled={handleToggleSendEnabled}
+                  handleMessageChange={handleMessageChange}
+                  handleGenerateEntry={handleGenerateEntry}
+                />
+              ))}
+            </div>
+          )}
+        </section>
       </main>
+
+      {/* 削除確認モーダル */}
+      <Modal
+        opened={isDeleteModalOpen}
+        onClose={() => setIsDeleteModalOpen(false)}
+        title="リードの削除"
+        centered
+        size="sm"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            選択した{" "}
+            <span className="font-bold text-foreground">
+              {selectedLeadIds.size}件
+            </span>{" "}
+            のリードを削除しますか？
+          </p>
+          <p className="text-xs text-rose-500">この操作は取り消せません。</p>
+          <div className="flex justify-end gap-3 pt-4">
+            <Button
+              variant="outline"
+              onClick={() => setIsDeleteModalOpen(false)}
+              disabled={isDeleting}
+            >
+              キャンセル
+            </Button>
+            <Button
+              color="red"
+              onClick={() => void handleDeleteSelectedLeads()}
+              loading={isDeleting}
+            >
+              削除する
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
@@ -2765,6 +3045,11 @@ function createDefaultSenderProfile(): SenderProfile {
     firstNameKana: "",
     email: "",
     phone: "",
+    postalCode: "",
+    prefecture: "",
+    city: "",
+    address: "",
+    building: "",
     subject: "",
     meetingUrl: "",
   };

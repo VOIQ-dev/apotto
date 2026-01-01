@@ -1,10 +1,10 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from "next/server";
 
-import { createSupabaseServiceClient } from '@/lib/supabaseServer';
-import { formatTokyoDay } from '@/lib/pdfTracking';
+import { createSupabaseServiceClient } from "@/lib/supabaseServer";
+import { formatTokyoDay } from "@/lib/pdfTracking";
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 const MAINTENANCE_API_KEY = process.env.MAINTENANCE_API_KEY;
 
@@ -12,12 +12,14 @@ type CleanupResult = {
   success: true;
   deleted: {
     unopenedSendLogs: number;
+    revokedSendLogs: number;
     previewSendLogs: number;
     oldOpenEvents: number;
     oldDailyMetrics: number;
   };
   thresholds: {
     unopenedBefore: string;
+    revokedBefore: string;
     keepOpenEventsDays: number;
     keepDailyMetricsDays: number;
   };
@@ -25,9 +27,9 @@ type CleanupResult = {
 
 function requireKey(request: NextRequest) {
   if (!MAINTENANCE_API_KEY) return;
-  const header = request.headers.get('x-api-key')?.trim();
+  const header = request.headers.get("x-api-key")?.trim();
   if (header !== MAINTENANCE_API_KEY) {
-    throw new Error('Unauthorized');
+    throw new Error("Unauthorized");
   }
 }
 
@@ -38,26 +40,33 @@ export async function POST(request: NextRequest) {
     const supabase = createSupabaseServiceClient();
 
     const now = Date.now();
-    const sevenDaysAgoIso = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const sevenDaysAgoIso = new Date(
+      now - 7 * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    // 失効済みログは sent_at から97日（7日失効 + 90日保持）で物理削除
+    const revokedDeleteDays = 97;
+    const revokedBeforeIso = new Date(
+      now - revokedDeleteDays * 24 * 60 * 60 * 1000,
+    ).toISOString();
     const keepOpenEventsDays = 180;
     const keepDailyMetricsDays = 180;
     const openEventsBeforeIso = new Date(
-      now - keepOpenEventsDays * 24 * 60 * 60 * 1000
+      now - keepOpenEventsDays * 24 * 60 * 60 * 1000,
     ).toISOString();
     const dailyBeforeDay = formatTokyoDay(
-      new Date(now - keepDailyMetricsDays * 24 * 60 * 60 * 1000)
+      new Date(now - keepDailyMetricsDays * 24 * 60 * 60 * 1000),
     );
 
     // 1) Preview/temporary logs: recipient_homepage_url is null → 7日で削除（DB肥大防止）
     const { data: previewDeleted, error: previewError } = await supabase
-      .from('pdf_send_logs')
+      .from("pdf_send_logs")
       .delete()
-      .lt('created_at', sevenDaysAgoIso)
-      .is('recipient_homepage_url', null)
-      .select('id');
+      .lt("created_at", sevenDaysAgoIso)
+      .is("recipient_homepage_url", null)
+      .select("id");
 
     if (previewError) {
-      console.error('[cleanup] preview delete failed', previewError);
+      console.error("[cleanup] preview delete failed", previewError);
     }
 
     // 2) Unopened send logs (denominator candidates):
@@ -70,30 +79,33 @@ export async function POST(request: NextRequest) {
 
     for (let i = 0; i < maxBatches; i += 1) {
       const { data: candidates, error: selectError } = await supabase
-        .from('pdf_send_logs')
-        .select('id')
-        .eq('is_revoked', false)
-        .lt('sent_at', sevenDaysAgoIso)
-        .is('first_opened_at', null)
-        .not('recipient_homepage_url', 'is', null)
-        .neq('recipient_homepage_url', '')
-        .order('sent_at', { ascending: true })
+        .from("pdf_send_logs")
+        .select("id")
+        .eq("is_revoked", false)
+        .lt("sent_at", sevenDaysAgoIso)
+        .is("first_opened_at", null)
+        .not("recipient_homepage_url", "is", null)
+        .neq("recipient_homepage_url", "")
+        .order("sent_at", { ascending: true })
         .limit(batchSize);
 
       if (selectError) {
-        console.error('[cleanup] unopened candidates select failed', selectError);
+        console.error(
+          "[cleanup] unopened candidates select failed",
+          selectError,
+        );
         break;
       }
       if (!candidates || candidates.length === 0) break;
 
       const ids = candidates.map((c) => c.id as string);
       const { data: openedRows, error: openedError } = await supabase
-        .from('pdf_open_events')
-        .select('pdf_send_log_id')
-        .in('pdf_send_log_id', ids);
+        .from("pdf_open_events")
+        .select("pdf_send_log_id")
+        .in("pdf_send_log_id", ids);
 
       if (openedError) {
-        console.error('[cleanup] open_events lookup failed', openedError);
+        console.error("[cleanup] open_events lookup failed", openedError);
         // open events を確認できない場合は削除しない
         break;
       }
@@ -101,7 +113,7 @@ export async function POST(request: NextRequest) {
       const openedSet = new Set(
         (openedRows ?? [])
           .map((r) => (r as { pdf_send_log_id?: string }).pdf_send_log_id)
-          .filter(Boolean) as string[]
+          .filter(Boolean) as string[],
       );
       const deletable = ids.filter((id) => !openedSet.has(id));
       if (deletable.length === 0) {
@@ -110,13 +122,13 @@ export async function POST(request: NextRequest) {
       }
 
       const { data: revoked, error: revokeError } = await supabase
-        .from('pdf_send_logs')
+        .from("pdf_send_logs")
         .update({ is_revoked: true })
-        .in('id', deletable)
-        .select('id');
+        .in("id", deletable)
+        .select("id");
 
       if (revokeError) {
-        console.error('[cleanup] unopened revoke failed', revokeError);
+        console.error("[cleanup] unopened revoke failed", revokeError);
         break;
       }
 
@@ -126,38 +138,83 @@ export async function POST(request: NextRequest) {
       if (candidates.length < batchSize) break;
     }
 
-    // 3) Old open events (180日)
-    const { data: openDeleted, error: openDeleteError } = await supabase
-      .from('pdf_open_events')
-      .delete()
-      .lt('opened_at', openEventsBeforeIso)
-      .select('id');
+    // 3) Revoked send logs: sent_at から97日経過した失効済みログを物理削除
+    // ※ 97日 = 失効7日 + 保持90日
+    let revokedDeletedCount = 0;
+    for (let i = 0; i < maxBatches; i += 1) {
+      const { data: revokedCandidates, error: revokedSelectError } =
+        await supabase
+          .from("pdf_send_logs")
+          .select("id")
+          .eq("is_revoked", true)
+          .lt("sent_at", revokedBeforeIso)
+          .order("sent_at", { ascending: true })
+          .limit(batchSize);
 
-    if (openDeleteError) {
-      console.error('[cleanup] open_events delete failed', openDeleteError);
+      if (revokedSelectError) {
+        console.error(
+          "[cleanup] revoked candidates select failed",
+          revokedSelectError,
+        );
+        break;
+      }
+      if (!revokedCandidates || revokedCandidates.length === 0) break;
+
+      const revokedIds = revokedCandidates.map((c) => c.id as string);
+
+      const { data: deleted, error: deleteError } = await supabase
+        .from("pdf_send_logs")
+        .delete()
+        .in("id", revokedIds)
+        .select("id");
+
+      if (deleteError) {
+        console.error("[cleanup] revoked delete failed", deleteError);
+        break;
+      }
+
+      revokedDeletedCount += deleted?.length ?? revokedIds.length;
+
+      if (revokedCandidates.length < batchSize) break;
     }
 
-    // 4) Old daily metrics (180日)
-    const { data: metricDeleted, error: metricDeleteError } = await supabase
-      .from('pdf_daily_metrics')
+    // 5) Old open events (180日)
+    const { data: openDeleted, error: openDeleteError } = await supabase
+      .from("pdf_open_events")
       .delete()
-      .lt('day', dailyBeforeDay)
-      .select('day');
+      .lt("opened_at", openEventsBeforeIso)
+      .select("id");
+
+    if (openDeleteError) {
+      console.error("[cleanup] open_events delete failed", openDeleteError);
+    }
+
+    // 6) Old daily metrics (180日)
+    const { data: metricDeleted, error: metricDeleteError } = await supabase
+      .from("pdf_daily_metrics")
+      .delete()
+      .lt("day", dailyBeforeDay)
+      .select("day");
 
     if (metricDeleteError) {
-      console.error('[cleanup] pdf_daily_metrics delete failed', metricDeleteError);
+      console.error(
+        "[cleanup] pdf_daily_metrics delete failed",
+        metricDeleteError,
+      );
     }
 
     const result: CleanupResult = {
       success: true,
       deleted: {
         unopenedSendLogs: unopenedRevokedCount,
+        revokedSendLogs: revokedDeletedCount,
         previewSendLogs: previewDeleted?.length ?? 0,
         oldOpenEvents: openDeleted?.length ?? 0,
         oldDailyMetrics: metricDeleted?.length ?? 0,
       },
       thresholds: {
         unopenedBefore: sevenDaysAgoIso,
+        revokedBefore: revokedBeforeIso,
         keepOpenEventsDays,
         keepDailyMetricsDays,
       },
@@ -165,13 +222,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(result);
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    const status = message === 'Unauthorized' ? 401 : 500;
+    const message = err instanceof Error ? err.message : "Unknown error";
+    const status = message === "Unauthorized" ? 401 : 500;
     return NextResponse.json({ error: message }, { status });
   }
 }
-
-
-
-
-

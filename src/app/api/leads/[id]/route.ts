@@ -1,13 +1,13 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from "next/server";
 
 import {
   getAccountContextFromRequest,
   applyAuthCookies,
-} from '@/lib/routeAuth';
-import { createSupabaseServiceClient } from '@/lib/supabaseServer';
+} from "@/lib/routeAuth";
+import { createSupabaseServiceClient } from "@/lib/supabaseServer";
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 type RouteContext = {
   params: Promise<{ id: string }>;
@@ -15,16 +15,20 @@ type RouteContext = {
 
 // PATCH: 個別リード編集
 export async function PATCH(request: NextRequest, context: RouteContext) {
-  const { companyId, cookieMutations } = await getAccountContextFromRequest(request);
+  const { companyId, cookieMutations } =
+    await getAccountContextFromRequest(request);
   if (!companyId) {
-    const res = NextResponse.json({ error: '認証が必要です' }, { status: 401 });
+    const res = NextResponse.json({ error: "認証が必要です" }, { status: 401 });
     applyAuthCookies(res, cookieMutations);
     return res;
   }
 
   const { id } = await context.params;
   if (!id) {
-    const res = NextResponse.json({ error: 'リードIDが必要です' }, { status: 400 });
+    const res = NextResponse.json(
+      { error: "リードIDが必要です" },
+      { status: 400 },
+    );
     applyAuthCookies(res, cookieMutations);
     return res;
   }
@@ -41,9 +45,13 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     if (body.email !== undefined) updates.email = body.email;
     if (body.isAppointed !== undefined) updates.is_appointed = body.isAppointed;
     if (body.isNg !== undefined) updates.is_ng = body.isNg;
+    if (body.sendStatus !== undefined) updates.send_status = body.sendStatus;
 
     if (Object.keys(updates).length === 0) {
-      const res = NextResponse.json({ error: '更新データがありません' }, { status: 400 });
+      const res = NextResponse.json(
+        { error: "更新データがありません" },
+        { status: 400 },
+      );
       applyAuthCookies(res, cookieMutations);
       return res;
     }
@@ -53,22 +61,28 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     const supabase = createSupabaseServiceClient();
 
     const { data, error } = await supabase
-      .from('lead_lists')
+      .from("lead_lists")
       .update(updates)
-      .eq('id', id)
-      .eq('company_id', companyId)
+      .eq("id", id)
+      .eq("company_id", companyId)
       .select()
       .maybeSingle();
 
     if (error) {
-      console.error('[leads/patch] update error', error);
-      const res = NextResponse.json({ error: '更新に失敗しました' }, { status: 500 });
+      console.error("[leads/patch] update error", error);
+      const res = NextResponse.json(
+        { error: "更新に失敗しました" },
+        { status: 500 },
+      );
       applyAuthCookies(res, cookieMutations);
       return res;
     }
 
     if (!data) {
-      const res = NextResponse.json({ error: 'リードが見つかりません' }, { status: 404 });
+      const res = NextResponse.json(
+        { error: "リードが見つかりません" },
+        { status: 404 },
+      );
       applyAuthCookies(res, cookieMutations);
       return res;
     }
@@ -77,10 +91,65 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     applyAuthCookies(res, cookieMutations);
     return res;
   } catch (err) {
-    console.error('[leads/patch] error', err);
-    const res = NextResponse.json({ error: '更新処理に失敗しました' }, { status: 500 });
+    console.error("[leads/patch] error", err);
+    const res = NextResponse.json(
+      { error: "更新処理に失敗しました" },
+      { status: 500 },
+    );
     applyAuthCookies(res, cookieMutations);
     return res;
   }
 }
 
+// DELETE: 個別リード削除
+export async function DELETE(request: NextRequest, context: RouteContext) {
+  const { companyId, cookieMutations } =
+    await getAccountContextFromRequest(request);
+  if (!companyId) {
+    const res = NextResponse.json({ error: "認証が必要です" }, { status: 401 });
+    applyAuthCookies(res, cookieMutations);
+    return res;
+  }
+
+  const { id } = await context.params;
+  if (!id) {
+    const res = NextResponse.json(
+      { error: "リードIDが必要です" },
+      { status: 400 },
+    );
+    applyAuthCookies(res, cookieMutations);
+    return res;
+  }
+
+  try {
+    const supabase = createSupabaseServiceClient();
+
+    const { error } = await supabase
+      .from("lead_lists")
+      .delete()
+      .eq("id", id)
+      .eq("company_id", companyId);
+
+    if (error) {
+      console.error("[leads/delete] error", error);
+      const res = NextResponse.json(
+        { error: "削除に失敗しました" },
+        { status: 500 },
+      );
+      applyAuthCookies(res, cookieMutations);
+      return res;
+    }
+
+    const res = NextResponse.json({ success: true });
+    applyAuthCookies(res, cookieMutations);
+    return res;
+  } catch (err) {
+    console.error("[leads/delete] error", err);
+    const res = NextResponse.json(
+      { error: "削除処理に失敗しました" },
+      { status: 500 },
+    );
+    applyAuthCookies(res, cookieMutations);
+    return res;
+  }
+}

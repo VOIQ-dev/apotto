@@ -1,7 +1,7 @@
-'use client';
+"use client";
 
-import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
 type Account = {
   id: string;
@@ -9,7 +9,7 @@ type Account = {
   email: string;
   name: string | null;
   role: string;
-  status: 'invited' | 'active' | 'inactive' | string;
+  status: "invited" | "active" | "inactive" | string;
   invited_at: string | null;
   activated_at: string | null;
   last_login_at: string | null;
@@ -34,31 +34,31 @@ type CompaniesResponse = {
 };
 
 function formatDateJP(iso: string | null | undefined): string {
-  if (!iso) return '';
+  if (!iso) return "";
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleDateString('ja-JP');
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("ja-JP");
 }
 
 function formatDateTimeJP(iso: string | null | undefined): string {
-  if (!iso) return '';
+  if (!iso) return "";
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString("ja-JP", { hour: "2-digit", minute: "2-digit" });
 }
 
 function roleLabel(role: string): string {
-  return role === 'admin' ? '管理者' : 'メンバー';
+  return role === "admin" ? "管理者" : "メンバー";
 }
 
 function loginStateLabel(account: Account): string {
-  return account.last_login_at ? 'ログイン済' : '未ログイン';
+  return account.last_login_at ? "ログイン済" : "未ログイン";
 }
 
 function loginStateClass(account: Account): string {
   return account.last_login_at
-    ? 'bg-emerald-500/15 text-emerald-200 border-emerald-500/20'
-    : 'bg-slate-500/15 text-slate-200 border-slate-500/20';
+    ? "bg-emerald-500/15 text-emerald-200 border-emerald-500/20"
+    : "bg-slate-500/15 text-slate-200 border-slate-500/20";
 }
 
 export default function BackofficeCompaniesPage() {
@@ -67,28 +67,37 @@ export default function BackofficeCompaniesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [companies, setCompanies] = useState<Company[]>([]);
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   // Company modal
   const [companyModalOpen, setCompanyModalOpen] = useState(false);
-  const [companyModalMode, setCompanyModalMode] = useState<'create' | 'edit'>('create');
-  const [companyModalTarget, setCompanyModalTarget] = useState<Company | null>(null);
-  const [companyName, setCompanyName] = useState('');
-  const [companyDomain, setCompanyDomain] = useState('');
+  const [companyModalMode, setCompanyModalMode] = useState<"create" | "edit">(
+    "create",
+  );
+  const [companyModalTarget, setCompanyModalTarget] = useState<Company | null>(
+    null,
+  );
+  const [companyName, setCompanyName] = useState("");
+  const [companyDomain, setCompanyDomain] = useState("");
   const [companySubmitting, setCompanySubmitting] = useState(false);
 
   // Account modal
   const [accountModalOpen, setAccountModalOpen] = useState(false);
-  const [accountModalMode, setAccountModalMode] = useState<'create' | 'edit'>('create');
-  const [accountModalCompany, setAccountModalCompany] = useState<Company | null>(null);
-  const [accountModalTarget, setAccountModalTarget] = useState<Account | null>(null);
-  const [accountEmail, setAccountEmail] = useState('');
-  const [accountDisplayName, setAccountDisplayName] = useState('');
-  const [accountRole, setAccountRole] = useState<'admin' | 'member'>('member');
+  const [accountModalMode, setAccountModalMode] = useState<"create" | "edit">(
+    "create",
+  );
+  const [accountModalCompany, setAccountModalCompany] =
+    useState<Company | null>(null);
+  const [accountModalTarget, setAccountModalTarget] = useState<Account | null>(
+    null,
+  );
+  const [accountEmail, setAccountEmail] = useState("");
+  const [accountDisplayName, setAccountDisplayName] = useState("");
+  const [accountRole, setAccountRole] = useState<"admin" | "member">("member");
   const [accountSubmitting, setAccountSubmitting] = useState(false);
   const [issuedPassword, setIssuedPassword] = useState<string | null>(null);
-  const [newPassword, setNewPassword] = useState('');
+  const [newPassword, setNewPassword] = useState("");
   const [revealResetPassword, setRevealResetPassword] = useState(false);
   const [copiedMessage, setCopiedMessage] = useState<string | null>(null);
 
@@ -109,16 +118,16 @@ export default function BackofficeCompaniesPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/backoffice/companies');
+      const res = await fetch("/api/backoffice/companies");
       if (res.status === 401) {
-        router.replace('/backoffice/login');
+        router.replace("/backoffice/login");
         return;
       }
       const data = (await res.json().catch(() => ({}))) as CompaniesResponse;
-      if (!res.ok) throw new Error(data.error || '取得に失敗しました');
+      if (!res.ok) throw new Error(data.error || "取得に失敗しました");
       setCompanies(Array.isArray(data.companies) ? data.companies : []);
     } catch (e) {
-      setError(e instanceof Error ? e.message : '取得に失敗しました');
+      setError(e instanceof Error ? e.message : "取得に失敗しました");
     } finally {
       setLoading(false);
     }
@@ -130,23 +139,25 @@ export default function BackofficeCompaniesPage() {
   }, []);
 
   const handleLogout = async () => {
-    await fetch('/api/backoffice/auth/logout', { method: 'POST' }).catch(() => null);
-    router.replace('/backoffice/login');
+    await fetch("/api/backoffice/auth/logout", { method: "POST" }).catch(
+      () => null,
+    );
+    router.replace("/backoffice/login");
   };
 
   const openCreateCompany = () => {
-    setCompanyModalMode('create');
+    setCompanyModalMode("create");
     setCompanyModalTarget(null);
-    setCompanyName('');
-    setCompanyDomain('');
+    setCompanyName("");
+    setCompanyDomain("");
     setCompanyModalOpen(true);
   };
 
   const openEditCompany = (company: Company) => {
-    setCompanyModalMode('edit');
+    setCompanyModalMode("edit");
     setCompanyModalTarget(company);
     setCompanyName(company.name);
-    setCompanyDomain(company.domain ?? '');
+    setCompanyDomain(company.domain ?? "");
     setCompanyModalOpen(true);
   };
 
@@ -157,66 +168,72 @@ export default function BackofficeCompaniesPage() {
     try {
       const name = companyName.trim();
       const domain = companyDomain.trim();
-      if (!name) throw new Error('会社名は必須です');
+      if (!name) throw new Error("会社名は必須です");
 
-      const isEdit = companyModalMode === 'edit' && companyModalTarget;
+      const isEdit = companyModalMode === "edit" && companyModalTarget;
       const url = isEdit
         ? `/api/backoffice/companies/${companyModalTarget.id}`
-        : '/api/backoffice/companies';
-      const method = isEdit ? 'PATCH' : 'POST';
+        : "/api/backoffice/companies";
+      const method = isEdit ? "PATCH" : "POST";
 
       const res = await fetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, domain: domain || undefined }),
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string };
-      if (!res.ok) throw new Error(data.error || '保存に失敗しました');
+      if (!res.ok) throw new Error(data.error || "保存に失敗しました");
 
       setCompanyModalOpen(false);
       await fetchCompanies();
     } catch (e) {
-      setError(e instanceof Error ? e.message : '保存に失敗しました');
+      setError(e instanceof Error ? e.message : "保存に失敗しました");
     } finally {
       setCompanySubmitting(false);
     }
   };
 
   const deleteCompany = async (company: Company) => {
-    const ok = window.confirm(`「${company.name}」を削除しますか？（配下のアカウントも削除されます）`);
+    const ok = window.confirm(
+      `「${company.name}」を削除しますか？（配下のアカウントも削除されます）`,
+    );
     if (!ok) return;
     setError(null);
     try {
-      const res = await fetch(`/api/backoffice/companies/${company.id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/backoffice/companies/${company.id}`, {
+        method: "DELETE",
+      });
       const data = (await res.json().catch(() => ({}))) as { error?: string };
-      if (!res.ok) throw new Error(data.error || '削除に失敗しました');
+      if (!res.ok) throw new Error(data.error || "削除に失敗しました");
       await fetchCompanies();
     } catch (e) {
-      setError(e instanceof Error ? e.message : '削除に失敗しました');
+      setError(e instanceof Error ? e.message : "削除に失敗しました");
     }
   };
 
   const openCreateAccount = (company: Company) => {
     setIssuedPassword(null);
-    setNewPassword('');
-    setAccountModalMode('create');
+    setNewPassword("");
+    setAccountModalMode("create");
     setAccountModalCompany(company);
     setAccountModalTarget(null);
-    setAccountEmail('');
-    setAccountDisplayName('');
-    setAccountRole('member');
+    setAccountEmail("");
+    setAccountDisplayName("");
+    setAccountRole("member");
     setAccountModalOpen(true);
   };
 
   const openEditAccount = (company: Company, account: Account) => {
     setIssuedPassword(null);
-    setNewPassword('');
-    setAccountModalMode('edit');
+    setNewPassword("");
+    setAccountModalMode("edit");
     setAccountModalCompany(company);
     setAccountModalTarget(account);
     setAccountEmail(account.email);
-    setAccountDisplayName(account.name ?? '');
-    setAccountRole((account.role === 'admin' ? 'admin' : 'member') as 'admin' | 'member');
+    setAccountDisplayName(account.name ?? "");
+    setAccountRole(
+      (account.role === "admin" ? "admin" : "member") as "admin" | "member",
+    );
     setAccountModalOpen(true);
   };
 
@@ -229,46 +246,49 @@ export default function BackofficeCompaniesPage() {
 
     try {
       const email = accountEmail.trim();
-      if (!email) throw new Error('メールアドレスは必須です');
+      if (!email) throw new Error("メールアドレスは必須です");
 
-      if (accountModalMode === 'create') {
+      if (accountModalMode === "create") {
         const res = await fetch(
           `/api/backoffice/companies/${accountModalCompany.id}/accounts`,
           {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               email,
               name: accountDisplayName.trim() || undefined,
               role: accountRole,
             }),
-          }
+          },
         );
         const data = (await res.json().catch(() => ({}))) as {
           error?: string;
           initialPassword?: string;
         };
-        if (!res.ok) throw new Error(data.error || '作成に失敗しました');
-        setIssuedPassword(String(data.initialPassword ?? ''));
+        if (!res.ok) throw new Error(data.error || "作成に失敗しました");
+        setIssuedPassword(String(data.initialPassword ?? ""));
         await fetchCompanies();
         return;
       }
 
       if (!accountModalTarget) return;
-      const res = await fetch(`/api/backoffice/accounts/${accountModalTarget.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: accountDisplayName.trim() || null,
-          role: accountRole,
-        }),
-      });
+      const res = await fetch(
+        `/api/backoffice/accounts/${accountModalTarget.id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: accountDisplayName.trim() || null,
+            role: accountRole,
+          }),
+        },
+      );
       const data = (await res.json().catch(() => ({}))) as { error?: string };
-      if (!res.ok) throw new Error(data.error || '更新に失敗しました');
+      if (!res.ok) throw new Error(data.error || "更新に失敗しました");
       setAccountModalOpen(false);
       await fetchCompanies();
     } catch (e) {
-      setError(e instanceof Error ? e.message : '保存に失敗しました');
+      setError(e instanceof Error ? e.message : "保存に失敗しました");
     } finally {
       setAccountSubmitting(false);
     }
@@ -279,20 +299,23 @@ export default function BackofficeCompaniesPage() {
     setAccountSubmitting(true);
     setError(null);
     try {
-      const res = await fetch(`/api/backoffice/accounts/${accountModalTarget.id}/password`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: newPassword.trim() || undefined }),
-      });
+      const res = await fetch(
+        `/api/backoffice/accounts/${accountModalTarget.id}/password`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password: newPassword.trim() || undefined }),
+        },
+      );
       const data = (await res.json().catch(() => ({}))) as {
         error?: string;
         initialPassword?: string;
       };
-      if (!res.ok) throw new Error(data.error || '再発行に失敗しました');
-      setIssuedPassword(String(data.initialPassword ?? ''));
-      setNewPassword('');
+      if (!res.ok) throw new Error(data.error || "再発行に失敗しました");
+      setIssuedPassword(String(data.initialPassword ?? ""));
+      setNewPassword("");
     } catch (e) {
-      setError(e instanceof Error ? e.message : '再発行に失敗しました');
+      setError(e instanceof Error ? e.message : "再発行に失敗しました");
     } finally {
       setAccountSubmitting(false);
     }
@@ -309,19 +332,19 @@ export default function BackofficeCompaniesPage() {
         await navigator.clipboard.writeText(text);
         return;
       }
-      throw new Error('clipboard api unavailable');
+      throw new Error("clipboard api unavailable");
     } catch {
       // fallback
       try {
-        const textarea = document.createElement('textarea');
+        const textarea = document.createElement("textarea");
         textarea.value = text;
-        textarea.setAttribute('readonly', '');
-        textarea.style.position = 'fixed';
-        textarea.style.top = '-1000px';
-        textarea.style.left = '-1000px';
+        textarea.setAttribute("readonly", "");
+        textarea.style.position = "fixed";
+        textarea.style.top = "-1000px";
+        textarea.style.left = "-1000px";
         document.body.appendChild(textarea);
         textarea.select();
-        document.execCommand('copy');
+        document.execCommand("copy");
         document.body.removeChild(textarea);
       } catch {
         // ignore
@@ -332,12 +355,14 @@ export default function BackofficeCompaniesPage() {
   const deleteAccount = async (account: Account) => {
     setError(null);
     try {
-      const res = await fetch(`/api/backoffice/accounts/${account.id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/backoffice/accounts/${account.id}`, {
+        method: "DELETE",
+      });
       const data = (await res.json().catch(() => ({}))) as { error?: string };
-      if (!res.ok) throw new Error(data.error || '削除に失敗しました');
+      if (!res.ok) throw new Error(data.error || "削除に失敗しました");
       await fetchCompanies();
     } catch (e) {
-      setError(e instanceof Error ? e.message : '削除に失敗しました');
+      setError(e instanceof Error ? e.message : "削除に失敗しました");
     }
   };
 
@@ -410,16 +435,22 @@ export default function BackofficeCompaniesPage() {
             filtered.map((company) => {
               const isOpen = Boolean(expanded[company.id]);
               return (
-                <div key={company.id} className="rounded-2xl border border-white/10 bg-slate-900/40">
+                <div
+                  key={company.id}
+                  className="rounded-2xl border border-white/10 bg-slate-900/40"
+                >
                   <div className="flex items-center justify-between gap-3 p-5">
                     <div className="flex items-center gap-3">
                       <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/5 ring-1 ring-white/10 text-sm font-bold">
                         {company.name.slice(0, 1)}
                       </div>
                       <div>
-                        <div className="text-base font-semibold">{company.name}</div>
+                        <div className="text-base font-semibold">
+                          {company.name}
+                        </div>
                         <div className="text-xs text-slate-400">
-                          {company.accountCount}ユーザー・{formatDateJP(company.created_at)}登録
+                          {company.accountCount}ユーザー・
+                          {formatDateJP(company.created_at)}登録
                         </div>
                       </div>
                     </div>
@@ -453,12 +484,15 @@ export default function BackofficeCompaniesPage() {
                       </button>
                       <button
                         onClick={() =>
-                          setExpanded((prev) => ({ ...prev, [company.id]: !isOpen }))
+                          setExpanded((prev) => ({
+                            ...prev,
+                            [company.id]: !isOpen,
+                          }))
                         }
                         className="text-slate-300 hover:text-white"
-                        title={isOpen ? '閉じる' : '開く'}
+                        title={isOpen ? "閉じる" : "開く"}
                       >
-                        {isOpen ? '▴' : '▾'}
+                        {isOpen ? "▴" : "▾"}
                       </button>
                     </div>
                   </div>
@@ -466,7 +500,9 @@ export default function BackofficeCompaniesPage() {
                   {isOpen && (
                     <div className="border-t border-white/10 p-5">
                       <div className="flex items-center justify-between">
-                        <div className="text-sm font-semibold text-slate-200">ユーザー一覧</div>
+                        <div className="text-sm font-semibold text-slate-200">
+                          ユーザー一覧
+                        </div>
                         <button
                           className="text-sm text-amber-300 hover:text-amber-200"
                           onClick={() => openCreateAccount(company)}
@@ -488,25 +524,32 @@ export default function BackofficeCompaniesPage() {
                             >
                               <button
                                 className="flex flex-1 items-start gap-3 text-left"
-                                onClick={() => openEditAccount(company, account)}
+                                onClick={() =>
+                                  openEditAccount(company, account)
+                                }
                               >
                                 <div
                                   className={`mt-1 h-2.5 w-2.5 rounded-full ${
-                                    account.last_login_at ? 'bg-emerald-400' : 'bg-amber-400'
+                                    account.last_login_at
+                                      ? "bg-emerald-400"
+                                      : "bg-amber-400"
                                   }`}
                                 />
                                 <div className="min-w-0">
-                                  <div className="truncate text-sm font-medium">{account.email}</div>
+                                  <div className="truncate text-sm font-medium">
+                                    {account.email}
+                                  </div>
                                   {account.name && (
                                     <div className="truncate text-xs text-slate-300">
                                       {account.name}
                                     </div>
                                   )}
                                   <div className="text-xs text-slate-400">
-                                    {roleLabel(account.role)}・登録 {formatDateJP(account.created_at)}
+                                    {roleLabel(account.role)}・登録{" "}
+                                    {formatDateJP(account.created_at)}
                                     {account.last_login_at
                                       ? `・最終ログイン ${formatDateTimeJP(account.last_login_at)}`
-                                      : '・未ログイン'}
+                                      : "・未ログイン"}
                                   </div>
                                 </div>
                               </button>
@@ -514,19 +557,21 @@ export default function BackofficeCompaniesPage() {
                               <div className="flex items-center gap-2">
                                 <div
                                   className={`rounded-full border px-3 py-1 text-xs ${loginStateClass(
-                                    account
+                                    account,
                                   )}`}
                                   title={
                                     account.last_login_at
                                       ? `最終ログイン: ${formatDateTimeJP(account.last_login_at)}`
-                                      : '未ログイン'
+                                      : "未ログイン"
                                   }
                                 >
                                   {loginStateLabel(account)}
                                 </div>
                                 <button
                                   className="rounded-lg p-2 text-slate-400 hover:text-rose-300 hover:bg-rose-500/10"
-                                  onClick={() => openDeleteAccountModal(company, account)}
+                                  onClick={() =>
+                                    openDeleteAccountModal(company, account)
+                                  }
                                   title="ユーザーを削除"
                                 >
                                   <svg
@@ -563,7 +608,7 @@ export default function BackofficeCompaniesPage() {
           <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-slate-950 p-6">
             <div className="mb-4">
               <div className="text-lg font-bold">
-                {companyModalMode === 'create' ? '企業を追加' : '企業を編集'}
+                {companyModalMode === "create" ? "企業を追加" : "企業を編集"}
               </div>
               <div className="text-xs text-slate-400">
                 会社名とドメイン（任意）を設定します。
@@ -571,7 +616,9 @@ export default function BackofficeCompaniesPage() {
             </div>
             <form onSubmit={submitCompany} className="grid gap-4">
               <div className="grid gap-2">
-                <label className="text-xs font-semibold text-slate-300">会社名</label>
+                <label className="text-xs font-semibold text-slate-300">
+                  会社名
+                </label>
                 <input
                   className="input-clean bg-slate-900/60"
                   value={companyName}
@@ -580,7 +627,9 @@ export default function BackofficeCompaniesPage() {
                 />
               </div>
               <div className="grid gap-2">
-                <label className="text-xs font-semibold text-slate-300">ドメイン（任意）</label>
+                <label className="text-xs font-semibold text-slate-300">
+                  ドメイン（任意）
+                </label>
                 <input
                   className="input-clean bg-slate-900/60"
                   value={companyDomain}
@@ -596,8 +645,12 @@ export default function BackofficeCompaniesPage() {
                 >
                   キャンセル
                 </button>
-                <button type="submit" className="btn-primary" disabled={companySubmitting}>
-                  {companySubmitting ? '保存中...' : '保存'}
+                <button
+                  type="submit"
+                  className="btn-primary"
+                  disabled={companySubmitting}
+                >
+                  {companySubmitting ? "保存中..." : "保存"}
                 </button>
               </div>
             </form>
@@ -611,10 +664,15 @@ export default function BackofficeCompaniesPage() {
           <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-slate-950 p-6">
             <div className="mb-4">
               <div className="text-lg font-bold">
-                {accountModalMode === 'create' ? 'ユーザーを追加' : 'ユーザーを編集'}
+                {accountModalMode === "create"
+                  ? "ユーザーを追加"
+                  : "ユーザーを編集"}
               </div>
               <div className="text-xs text-slate-400">
-                会社: <span className="font-semibold text-slate-200">{accountModalCompany.name}</span>
+                会社:{" "}
+                <span className="font-semibold text-slate-200">
+                  {accountModalCompany.name}
+                </span>
               </div>
             </div>
 
@@ -633,7 +691,7 @@ export default function BackofficeCompaniesPage() {
                         className="btn-secondary py-1 px-2 text-xs"
                         onClick={async () => {
                           await copyToClipboard(accountEmail.trim());
-                          setCopiedMessage('メールをコピーしました');
+                          setCopiedMessage("メールをコピーしました");
                           setTimeout(() => setCopiedMessage(null), 1200);
                         }}
                       >
@@ -643,7 +701,9 @@ export default function BackofficeCompaniesPage() {
                   </div>
 
                   <div className="grid gap-1">
-                    <div className="text-[11px] text-slate-400">初期パスワード</div>
+                    <div className="text-[11px] text-slate-400">
+                      初期パスワード
+                    </div>
                     <div className="flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-slate-950/30 px-3 py-2">
                       <div className="min-w-0 truncate font-mono text-sm text-slate-200">
                         {issuedPassword}
@@ -653,7 +713,7 @@ export default function BackofficeCompaniesPage() {
                         className="btn-secondary py-1 px-2 text-xs"
                         onClick={async () => {
                           await copyToClipboard(issuedPassword);
-                          setCopiedMessage('パスワードをコピーしました');
+                          setCopiedMessage("パスワードをコピーしました");
                           setTimeout(() => setCopiedMessage(null), 1200);
                         }}
                       >
@@ -667,10 +727,15 @@ export default function BackofficeCompaniesPage() {
                   初回ログインでパスワード変更画面へ誘導されます。
                 </div>
                 {copiedMessage && (
-                  <div className="mt-3 text-xs text-emerald-300">{copiedMessage}</div>
+                  <div className="mt-3 text-xs text-emerald-300">
+                    {copiedMessage}
+                  </div>
                 )}
                 <div className="mt-4 flex flex-wrap justify-end gap-2">
-                  <button className="btn-primary" onClick={() => setAccountModalOpen(false)}>
+                  <button
+                    className="btn-primary"
+                    onClick={() => setAccountModalOpen(false)}
+                  >
                     閉じる
                   </button>
                 </div>
@@ -678,18 +743,22 @@ export default function BackofficeCompaniesPage() {
             ) : (
               <form onSubmit={submitAccount} className="grid gap-4">
                 <div className="grid gap-2">
-                  <label className="text-xs font-semibold text-slate-300">メールアドレス</label>
+                  <label className="text-xs font-semibold text-slate-300">
+                    メールアドレス
+                  </label>
                   <input
                     className="input-clean bg-slate-900/60"
                     value={accountEmail}
                     onChange={(e) => setAccountEmail(e.target.value)}
                     type="email"
                     required
-                    disabled={accountModalMode === 'edit'}
+                    disabled={accountModalMode === "edit"}
                   />
                 </div>
                 <div className="grid gap-2">
-                  <label className="text-xs font-semibold text-slate-300">表示名（任意）</label>
+                  <label className="text-xs font-semibold text-slate-300">
+                    表示名（任意）
+                  </label>
                   <input
                     className="input-clean bg-slate-900/60"
                     value={accountDisplayName}
@@ -699,11 +768,15 @@ export default function BackofficeCompaniesPage() {
                 </div>
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="grid gap-2">
-                    <label className="text-xs font-semibold text-slate-300">権限</label>
+                    <label className="text-xs font-semibold text-slate-300">
+                      権限
+                    </label>
                     <select
                       className="input-clean bg-slate-900/60"
                       value={accountRole}
-                      onChange={(e) => setAccountRole(e.target.value as 'admin' | 'member')}
+                      onChange={(e) =>
+                        setAccountRole(e.target.value as "admin" | "member")
+                      }
                     >
                       <option value="admin">admin（管理者）</option>
                       <option value="member">member（一般）</option>
@@ -711,9 +784,11 @@ export default function BackofficeCompaniesPage() {
                   </div>
                 </div>
 
-                {accountModalMode === 'edit' && (
+                {accountModalMode === "edit" && (
                   <div className="rounded-xl border border-white/10 bg-slate-900/30 p-4">
-                    <div className="text-sm font-semibold">パスワード再発行</div>
+                    <div className="text-sm font-semibold">
+                      パスワード再発行
+                    </div>
                     <div className="mt-1 text-xs text-slate-400">
                       現在のパスワードは取得できません。再発行（または指定）してログイン用の初期パスワードを表示します。
                     </div>
@@ -725,7 +800,7 @@ export default function BackofficeCompaniesPage() {
                           onChange={(e) => setNewPassword(e.target.value)}
                           placeholder="空なら自動生成（8文字以上で指定も可）"
                           autoComplete="new-password"
-                          type={revealResetPassword ? 'text' : 'password'}
+                          type={revealResetPassword ? "text" : "password"}
                         />
                         <button
                           type="button"
@@ -774,8 +849,12 @@ export default function BackofficeCompaniesPage() {
                   >
                     キャンセル
                   </button>
-                  <button type="submit" className="btn-primary" disabled={accountSubmitting}>
-                    {accountSubmitting ? '保存中...' : '保存'}
+                  <button
+                    type="submit"
+                    className="btn-primary"
+                    disabled={accountSubmitting}
+                  >
+                    {accountSubmitting ? "保存中..." : "保存"}
                   </button>
                 </div>
               </form>
@@ -826,7 +905,7 @@ export default function BackofficeCompaniesPage() {
                 onClick={() => void confirmDeleteAccount()}
                 disabled={deleteAccountSubmitting}
               >
-                {deleteAccountSubmitting ? '削除中...' : '削除する'}
+                {deleteAccountSubmitting ? "削除中..." : "削除する"}
               </button>
             </div>
           </div>
@@ -835,8 +914,3 @@ export default function BackofficeCompaniesPage() {
     </div>
   );
 }
-
-
-
-
-

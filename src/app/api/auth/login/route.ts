@@ -1,10 +1,10 @@
-import { createServerClient } from '@supabase/ssr';
-import { NextRequest, NextResponse } from 'next/server';
+import { createServerClient } from "@supabase/ssr";
+import { NextRequest, NextResponse } from "next/server";
 
-import { createSupabaseServiceClient } from '@/lib/supabaseServer';
+import { createSupabaseServiceClient } from "@/lib/supabaseServer";
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 type RequestBody = {
   email?: string;
@@ -23,7 +23,7 @@ function getPublicSupabaseEnv() {
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !anonKey) {
     throw new Error(
-      'Supabase の公開環境変数 (NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY) が設定されていません。'
+      "Supabase の公開環境変数 (NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY) が設定されていません。",
     );
   }
   return { url, anonKey };
@@ -43,7 +43,7 @@ function createAuthClientForRequest(request: NextRequest) {
       remove(name, options) {
         cookieMutations.push({
           name,
-          value: '',
+          value: "",
           options: { ...options, maxAge: 0 },
         });
       },
@@ -52,7 +52,10 @@ function createAuthClientForRequest(request: NextRequest) {
   return { supabase, cookieMutations };
 }
 
-function applyAuthCookies(response: NextResponse, cookieMutations: CookieMutation[]) {
+function applyAuthCookies(
+  response: NextResponse,
+  cookieMutations: CookieMutation[],
+) {
   for (const c of cookieMutations) {
     response.cookies.set(c.name, c.value, c.options);
   }
@@ -61,15 +64,15 @@ function applyAuthCookies(response: NextResponse, cookieMutations: CookieMutatio
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json().catch(() => ({}))) as RequestBody;
-    const email = String(body.email ?? '')
+    const email = String(body.email ?? "")
       .trim()
       .toLowerCase();
-    const password = String(body.password ?? '');
+    const password = String(body.password ?? "");
 
     if (!email || !password) {
       return NextResponse.json(
-        { error: 'email と password は必須です' },
-        { status: 400 }
+        { error: "email と password は必須です" },
+        { status: 400 },
       );
     }
 
@@ -80,15 +83,15 @@ export async function POST(request: NextRequest) {
     });
 
     if (error || !data.session || !data.user) {
-      const raw = String(error?.message ?? '');
+      const raw = String(error?.message ?? "");
       const msg = /email not confirmed/i.test(raw)
-        ? 'メールアドレスが未確認です（Email not confirmed）'
+        ? "メールアドレスが未確認です（Email not confirmed）"
         : /invalid login credentials/i.test(raw)
-        ? 'メールアドレスまたはパスワードが正しくありません'
-        : 'ログインに失敗しました';
+          ? "メールアドレスまたはパスワードが正しくありません"
+          : "ログインに失敗しました";
       const res = NextResponse.json(
         { error: msg },
-        { status: /email not confirmed/i.test(raw) ? 403 : 401 }
+        { status: /email not confirmed/i.test(raw) ? 403 : 401 },
       );
       applyAuthCookies(res, cookieMutations);
       return res;
@@ -97,19 +100,21 @@ export async function POST(request: NextRequest) {
     // DB側のアカウントを確認（会社スコープ等に必要）
     const service = createSupabaseServiceClient();
     const { data: account, error: accountErr } = await service
-      .from('accounts')
-      .select('id, status, activated_at')
-      .eq('email', email)
+      .from("accounts")
+      .select("id, status, activated_at")
+      .eq("email", email)
       .maybeSingle();
     if (accountErr) {
-      console.error('[auth/login] accounts lookup failed', accountErr);
+      console.error("[auth/login] accounts lookup failed", accountErr);
     }
-    const accountId = String((account as { id?: unknown } | null)?.id ?? '').trim();
+    const accountId = String(
+      (account as { id?: unknown } | null)?.id ?? "",
+    ).trim();
     if (!accountId) {
       await supabase.auth.signOut().catch(() => null);
       const res = NextResponse.json(
-        { error: 'アカウントが見つかりません' },
-        { status: 403 }
+        { error: "アカウントが見つかりません" },
+        { status: 403 },
       );
       applyAuthCookies(res, cookieMutations);
       return res;
@@ -117,23 +122,25 @@ export async function POST(request: NextRequest) {
 
     // ログイン可視化のために最終ログイン日時を更新（=制御ではなく観測）
     const nowIso = new Date().toISOString();
-    const status = String((account as { status?: unknown } | null)?.status ?? '').trim();
+    const status = String(
+      (account as { status?: unknown } | null)?.status ?? "",
+    ).trim();
     const activatedAt = String(
-      (account as { activated_at?: unknown } | null)?.activated_at ?? ''
+      (account as { activated_at?: unknown } | null)?.activated_at ?? "",
     ).trim();
     const patch: Record<string, unknown> = {
       last_login_at: nowIso,
       updated_at: nowIso,
     };
     // 未ログイン状態(invited 等)はログイン済(active)へ更新
-    if (status !== 'active') patch.status = 'active';
+    if (status !== "active") patch.status = "active";
     if (!activatedAt) patch.activated_at = nowIso;
     const { error: updateErr } = await service
-      .from('accounts')
+      .from("accounts")
       .update(patch)
-      .eq('id', accountId);
+      .eq("id", accountId);
     if (updateErr) {
-      console.error('[auth/login] accounts update failed', updateErr);
+      console.error("[auth/login] accounts update failed", updateErr);
     }
 
     const res = NextResponse.json({
@@ -147,15 +154,10 @@ export async function POST(request: NextRequest) {
     applyAuthCookies(res, cookieMutations);
     return res;
   } catch (err) {
-    console.error('[auth/login] Unexpected error', err);
+    console.error("[auth/login] Unexpected error", err);
     return NextResponse.json(
-      { error: '予期しないエラーが発生しました' },
-      { status: 500 }
+      { error: "予期しないエラーが発生しました" },
+      { status: 500 },
     );
   }
 }
-
-
-
-
-

@@ -1,41 +1,52 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from "next/server";
 
 import {
   getAccountContextFromRequest,
   applyAuthCookies,
-} from '@/lib/routeAuth';
-import { createSupabaseServiceClient } from '@/lib/supabaseServer';
+} from "@/lib/routeAuth";
+import { createSupabaseServiceClient } from "@/lib/supabaseServer";
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 // GET: リード一覧取得（ページネーション対応）
 export async function GET(request: NextRequest) {
-  const { companyId, cookieMutations } = await getAccountContextFromRequest(request);
+  const { companyId, cookieMutations } =
+    await getAccountContextFromRequest(request);
   if (!companyId) {
-    const res = NextResponse.json({ error: '認証が必要です' }, { status: 401 });
+    const res = NextResponse.json({ error: "認証が必要です" }, { status: 401 });
     applyAuthCookies(res, cookieMutations);
     return res;
   }
 
   const url = new URL(request.url);
-  const page = Math.max(1, parseInt(url.searchParams.get('page') || '1', 10));
-  const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get('limit') || '100', 10)));
+  const page = Math.max(1, parseInt(url.searchParams.get("page") || "1", 10));
+  const limit = Math.min(
+    100,
+    Math.max(1, parseInt(url.searchParams.get("limit") || "100", 10)),
+  );
   const offset = (page - 1) * limit;
 
   const supabase = createSupabaseServiceClient();
 
   // リード一覧取得
-  const { data: leads, error, count } = await supabase
-    .from('lead_lists')
-    .select('*', { count: 'exact' })
-    .eq('company_id', companyId)
-    .order('created_at', { ascending: false })
+  const {
+    data: leads,
+    error,
+    count,
+  } = await supabase
+    .from("lead_lists")
+    .select("*", { count: "exact" })
+    .eq("company_id", companyId)
+    .order("created_at", { ascending: false })
     .range(offset, offset + limit - 1);
 
   if (error) {
-    console.error('[leads] fetch error', error);
-    const res = NextResponse.json({ error: 'リード取得に失敗しました' }, { status: 500 });
+    console.error("[leads] fetch error", error);
+    const res = NextResponse.json(
+      { error: "リード取得に失敗しました" },
+      { status: 500 },
+    );
     applyAuthCookies(res, cookieMutations);
     return res;
   }
@@ -48,18 +59,18 @@ export async function GET(request: NextRequest) {
       if (lead.pdf_send_log_id) {
         // 送信ログから送信日時を取得
         const { data: sendLog } = await supabase
-          .from('pdf_send_logs')
-          .select('sent_at')
-          .eq('id', lead.pdf_send_log_id)
+          .from("pdf_send_logs")
+          .select("sent_at")
+          .eq("id", lead.pdf_send_log_id)
           .maybeSingle();
 
         if (sendLog?.sent_at) {
           // 開封イベントを取得
           const { data: openEvent } = await supabase
-            .from('pdf_open_events')
-            .select('opened_at')
-            .eq('pdf_send_log_id', lead.pdf_send_log_id)
-            .order('opened_at', { ascending: true })
+            .from("pdf_open_events")
+            .select("opened_at")
+            .eq("pdf_send_log_id", lead.pdf_send_log_id)
+            .order("opened_at", { ascending: true })
             .limit(1)
             .maybeSingle();
 
@@ -85,7 +96,7 @@ export async function GET(request: NextRequest) {
         ...lead,
         intentScore,
       };
-    })
+    }),
   );
 
   const res = NextResponse.json({
@@ -101,9 +112,10 @@ export async function GET(request: NextRequest) {
 
 // POST: CSVインポート（差分マージ）
 export async function POST(request: NextRequest) {
-  const { companyId, cookieMutations } = await getAccountContextFromRequest(request);
+  const { companyId, cookieMutations } =
+    await getAccountContextFromRequest(request);
   if (!companyId) {
-    const res = NextResponse.json({ error: '認証が必要です' }, { status: 401 });
+    const res = NextResponse.json({ error: "認証が必要です" }, { status: 401 });
     applyAuthCookies(res, cookieMutations);
     return res;
   }
@@ -123,7 +135,10 @@ export async function POST(request: NextRequest) {
     };
 
     if (!leads || !Array.isArray(leads) || leads.length === 0) {
-      const res = NextResponse.json({ error: 'リードデータが必要です' }, { status: 400 });
+      const res = NextResponse.json(
+        { error: "リードデータが必要です" },
+        { status: 400 },
+      );
       applyAuthCookies(res, cookieMutations);
       return res;
     }
@@ -132,11 +147,13 @@ export async function POST(request: NextRequest) {
 
     // 既存データのURL一覧を取得
     const { data: existingLeads } = await supabase
-      .from('lead_lists')
-      .select('homepage_url')
-      .eq('company_id', companyId);
+      .from("lead_lists")
+      .select("homepage_url")
+      .eq("company_id", companyId);
 
-    const existingUrls = new Set((existingLeads || []).map((l) => l.homepage_url));
+    const existingUrls = new Set(
+      (existingLeads || []).map((l) => l.homepage_url),
+    );
 
     // 差分のみ抽出
     const newLeads = leads.filter((l) => !existingUrls.has(l.homepageUrl));
@@ -144,7 +161,7 @@ export async function POST(request: NextRequest) {
 
     if (newLeads.length === 0) {
       const res = NextResponse.json({
-        message: '新規リードはありません（全て重複）',
+        message: "新規リードはありません（全て重複）",
         imported: 0,
         duplicates: existingCount,
         isFirstImport: existingUrls.size === 0,
@@ -162,23 +179,28 @@ export async function POST(request: NextRequest) {
       department: l.department || null,
       title: l.title || null,
       email: l.email || null,
-      send_status: 'pending',
+      send_status: "pending",
       is_appointed: false,
       is_ng: false,
       import_file_name: fileName || null,
     }));
 
-    const { error: insertError } = await supabase.from('lead_lists').insert(insertData);
+    const { error: insertError } = await supabase
+      .from("lead_lists")
+      .insert(insertData);
 
     if (insertError) {
-      console.error('[leads] import error', insertError);
-      const res = NextResponse.json({ error: 'インポートに失敗しました' }, { status: 500 });
+      console.error("[leads] import error", insertError);
+      const res = NextResponse.json(
+        { error: "インポートに失敗しました" },
+        { status: 500 },
+      );
       applyAuthCookies(res, cookieMutations);
       return res;
     }
 
     const res = NextResponse.json({
-      message: 'インポート成功',
+      message: "インポート成功",
       imported: newLeads.length,
       duplicates: existingCount,
       isFirstImport: existingUrls.size === 0,
@@ -186,10 +208,12 @@ export async function POST(request: NextRequest) {
     applyAuthCookies(res, cookieMutations);
     return res;
   } catch (err) {
-    console.error('[leads] import error', err);
-    const res = NextResponse.json({ error: 'インポート処理に失敗しました' }, { status: 500 });
+    console.error("[leads] import error", err);
+    const res = NextResponse.json(
+      { error: "インポート処理に失敗しました" },
+      { status: 500 },
+    );
     applyAuthCookies(res, cookieMutations);
     return res;
   }
 }
-

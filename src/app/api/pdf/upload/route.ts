@@ -8,17 +8,10 @@ import {
 
 const bucketName = process.env.NEXT_PUBLIC_SUPABASE_BUCKET || "pdf-assets";
 
-console.log("[pdf/upload] Bucket name configured:", bucketName);
-
 export async function POST(request: NextRequest) {
   try {
     const { user, companyId, cookieMutations } =
       await getAccountContextFromRequest(request);
-
-    console.log("[pdf/upload] Request received:", {
-      userId: user?.id,
-      companyId,
-    });
 
     const json = (body: unknown, init?: { status?: number }) => {
       const res = NextResponse.json(body, { status: init?.status });
@@ -56,33 +49,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log("[pdf/upload] Environment check:", {
-      supabaseUrl:
-        process.env.NEXT_PUBLIC_SUPABASE_URL?.substring(0, 30) + "...",
-      hasServiceRoleKey: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
-      bucketName,
-    });
-
     const supabase = createSupabaseServiceClient();
 
     // ユニークトークン生成
     const token = crypto.randomUUID();
     const storagePath = `${companyId}/${token}.pdf`;
 
-    console.log("[pdf/upload] Starting upload:", {
-      bucketName,
-      storagePath,
-      fileSize: file.size,
-      fileName: file.name,
-      companyId,
-    });
-
     // Storage にアップロード
     const arrayBuffer = await file.arrayBuffer();
-    console.log(
-      "[pdf/upload] ArrayBuffer created, size:",
-      arrayBuffer.byteLength,
-    );
 
     const { data: uploadData, error: uploadError } = await supabase.storage
       .from(bucketName)
@@ -90,12 +64,6 @@ export async function POST(request: NextRequest) {
         contentType: "application/pdf",
         upsert: false,
       });
-
-    console.log("[pdf/upload] Upload result:", {
-      success: !uploadError,
-      data: uploadData,
-      error: uploadError,
-    });
 
     if (uploadError) {
       console.error("[pdf/upload] Storage upload error:", uploadError);
@@ -105,16 +73,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log("[pdf/upload] Storage upload successful");
-
     // DB に PDF メタ情報を保存（pdfs テーブル）
-    console.log("[pdf/upload] Inserting to DB:", {
-      original_filename: file.name,
-      storage_path: storagePath,
-      size_bytes: file.size,
-      company_id: companyId,
-    });
-
     const { data: inserted, error: dbError } = await supabase
       .from("pdfs")
       .insert({
@@ -130,9 +89,6 @@ export async function POST(request: NextRequest) {
     if (dbError) {
       console.error("[pdf/upload] DB insert error:", dbError);
       // ロールバック: アップロードしたファイルを削除
-      console.log(
-        "[pdf/upload] Rolling back: removing uploaded file from storage",
-      );
       const { error: removeError } = await supabase.storage
         .from(bucketName)
         .remove([storagePath]);
@@ -145,9 +101,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log("[pdf/upload] DB insert successful:", inserted);
-
-    console.log("[pdf/upload] Creating signed URL for:", storagePath);
     const { data: signedUrlData, error: signedUrlError } =
       await supabase.storage
         .from(bucketName)
@@ -155,11 +108,8 @@ export async function POST(request: NextRequest) {
 
     if (signedUrlError) {
       console.error("[pdf/upload] Signed URL error:", signedUrlError);
-    } else {
-      console.log("[pdf/upload] Signed URL created successfully");
     }
 
-    console.log("[pdf/upload] Upload complete, returning response");
     return json({
       success: true,
       id: inserted?.id ?? null,

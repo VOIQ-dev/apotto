@@ -1,12 +1,12 @@
-'use client';
+"use client";
 
-import { FormEvent, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { FormEvent, useState } from "react";
+import { useRouter } from "next/navigation";
 
 export default function BackofficeLoginPage() {
   const router = useRouter();
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [revealPassword, setRevealPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -22,20 +22,23 @@ export default function BackofficeLoginPage() {
     setSubmitting(true);
 
     try {
-      const res = await fetch('/api/backoffice/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const res = await fetch("/api/backoffice/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: username.trim(), password }),
       });
-      const data = (await res.json().catch(() => ({}))) as { error?: string; success?: boolean };
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        success?: boolean;
+      };
 
       if (!res.ok || !data.success) {
-        throw new Error(data.error || 'ログインに失敗しました');
+        throw new Error(data.error || "ログインに失敗しました");
       }
 
-      router.push('/backoffice/companies');
+      router.push("/backoffice/companies");
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'ログインに失敗しました');
+      setError(e instanceof Error ? e.message : "ログインに失敗しました");
     } finally {
       setSubmitting(false);
     }
@@ -74,12 +77,12 @@ export default function BackofficeLoginPage() {
               <div className="relative">
                 <input
                   className="input-clean pr-12"
-                  type={revealPassword ? 'text' : 'password'}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                autoComplete="current-password"
-                placeholder="••••••••"
-                required
+                  type={revealPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="current-password"
+                  placeholder="••••••••"
+                  required
                 />
                 <button
                   type="button"
@@ -116,13 +119,17 @@ export default function BackofficeLoginPage() {
               </div>
             )}
 
-            <button type="submit" className="btn-primary w-full" disabled={submitting}>
-              {submitting ? '認証中...' : 'ログイン'}
+            <button
+              type="submit"
+              className="btn-primary w-full"
+              disabled={submitting}
+            >
+              {submitting ? "認証中..." : "ログイン"}
             </button>
           </form>
 
           <div className="mt-6 text-xs text-muted-foreground">
-            環境変数: <code className="font-mono">BACKOFFICE_USERNAME</code> /{' '}
+            環境変数: <code className="font-mono">BACKOFFICE_USERNAME</code> /{" "}
             <code className="font-mono">BACKOFFICE_PASSWORD</code>
           </div>
         </div>
@@ -130,8 +137,3 @@ export default function BackofficeLoginPage() {
     </div>
   );
 }
-
-
-
-
-

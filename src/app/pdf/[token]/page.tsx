@@ -1,6 +1,9 @@
-'use client';
+"use client";
 
-import { useState, useEffect, useRef, use } from 'react';
+import { useState, useEffect, useRef, use, useCallback } from "react";
+
+// アイドルタイムアウト（5分）
+const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 
 type PdfTokenPageProps = {
   params: Promise<{ token: string }>;
@@ -25,7 +28,7 @@ type ReadingStats = {
 
 export default function PdfTokenPage({ params }: PdfTokenPageProps) {
   const { token } = use(params);
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pdfInfo, setPdfInfo] = useState<PdfInfo | null>(null);
@@ -53,6 +56,27 @@ export default function PdfTokenPage({ params }: PdfTokenPageProps) {
   const startTimeRef = useRef<number>(0);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
+  // アイドルタイムアウト用
+  const lastActivityRef = useRef<number>(Date.now());
+  const activeElapsedRef = useRef<number>(0); // アイドル時間を除いた実際の閲覧時間
+
+  // セッションID管理
+  const getOrCreateSessionId = useCallback(() => {
+    if (typeof window === "undefined") return "";
+    const key = `pdf_session_${token}`;
+    let id = sessionStorage.getItem(key);
+    if (!id) {
+      id = crypto.randomUUID();
+      sessionStorage.setItem(key, id);
+    }
+    return id;
+  }, [token]);
+
+  // 操作検知（アイドルタイマーリセット）
+  const resetIdleTimer = useCallback(() => {
+    lastActivityRef.current = Date.now();
+  }, []);
+
   // PDF.js を動的にロード & PDF 読み込み
   useEffect(() => {
     if (!pdfInfo?.signedUrl) return;
@@ -61,8 +85,8 @@ export default function PdfTokenPage({ params }: PdfTokenPageProps) {
 
     const loadPdf = async () => {
       try {
-        const pdfjsLib = await import('pdfjs-dist');
-        pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
+        const pdfjsLib = await import("pdfjs-dist");
+        pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 
         // CORSを避けるため一度フェッチしてバイナリで渡す
         const res = await fetch(pdfInfo.signedUrl);
@@ -86,19 +110,33 @@ export default function PdfTokenPage({ params }: PdfTokenPageProps) {
 
         // 閲覧開始時刻を記録
         startTimeRef.current = Date.now();
+        lastActivityRef.current = Date.now();
+        activeElapsedRef.current = 0;
 
-        // 1秒ごとに経過時間を更新
+        // 1秒ごとに経過時間を更新（アイドルタイムアウト考慮）
         timerRef.current = setInterval(() => {
-          const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000);
-          setStats((prev) => ({ ...prev, elapsedSeconds: elapsed }));
+          const now = Date.now();
+          const timeSinceLastActivity = now - lastActivityRef.current;
+
+          // 5分以上操作がなければアイドル状態 → カウント停止
+          if (timeSinceLastActivity > IDLE_TIMEOUT_MS) {
+            return;
+          }
+
+          // アクティブな時間のみカウント
+          activeElapsedRef.current += 1;
+          setStats((prev) => ({
+            ...prev,
+            elapsedSeconds: activeElapsedRef.current,
+          }));
         }, 1000);
 
         // 最初のページをレンダリング
         renderPage(1, pdf);
       } catch (err) {
-        console.error('PDF読み込みエラー:', err);
+        console.error("PDF読み込みエラー:", err);
         if (!cancelled) {
-          setError('PDFの読み込みに失敗しました。');
+          setError("PDFの読み込みに失敗しました。");
         }
       }
     };
@@ -111,7 +149,7 @@ export default function PdfTokenPage({ params }: PdfTokenPageProps) {
         clearInterval(timerRef.current);
       }
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pdfInfo?.signedUrl]);
 
   // ページをレンダリング
@@ -124,25 +162,28 @@ export default function PdfTokenPage({ params }: PdfTokenPageProps) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const page = await (doc as any).getPage(pageNum);
-      
-      // 表示領域に合わせてスケールを計算
-      const containerWidth = 800;
+
+      // 表示領域に合わせてスケールを計算（高さベースでアスペクト比維持）
+      // ビューポートの高さの80%を使用（ナビゲーション用のスペースを確保）
+      const containerHeight =
+        typeof window !== "undefined" ? window.innerHeight * 0.75 : 600;
       const viewport = page.getViewport({ scale: 1 });
-      const scale = containerWidth / viewport.width;
+      const scale = containerHeight / viewport.height;
       const scaledViewport = page.getViewport({ scale });
 
       // オフスクリーン canvas にレンダリング
-      const canvas = document.createElement('canvas');
+      const canvas = document.createElement("canvas");
       canvas.width = scaledViewport.width;
       canvas.height = scaledViewport.height;
-      const context = canvas.getContext('2d');
+      const context = canvas.getContext("2d");
 
       if (!context) return;
 
-      await page.render({ canvasContext: context, viewport: scaledViewport }).promise;
+      await page.render({ canvasContext: context, viewport: scaledViewport })
+        .promise;
 
       // Data URL に変換して表示
-      setPageImage(canvas.toDataURL('image/png'));
+      setPageImage(canvas.toDataURL("image/png"));
       setCurrentPage(pageNum);
 
       // 読了率を更新
@@ -160,23 +201,19 @@ export default function PdfTokenPage({ params }: PdfTokenPageProps) {
 
       // 進捗をサーバへ保存（ベストエフォート）
       if (submitted && email.trim()) {
-        const elapsed = startTimeRef.current
-          ? Math.floor((Date.now() - startTimeRef.current) / 1000)
-          : 0;
         void fetch(`/api/pdf/${token}/progress`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             viewer_email: email.trim(),
             read_percentage: readPercentage,
             max_page_reached: maxPage,
-            elapsed_seconds: elapsed,
+            elapsed_seconds: activeElapsedRef.current,
           }),
         }).catch(() => {
           // ignore
         });
       }
-
     } catch (err) {
       console.error(`ページ ${pageNum} のレンダリングエラー:`, err);
     } finally {
@@ -187,13 +224,14 @@ export default function PdfTokenPage({ params }: PdfTokenPageProps) {
   // ページ移動
   const goToPage = (page: number) => {
     if (page < 1 || page > totalPages || pageLoading) return;
+    resetIdleTimer(); // 操作検知
     renderPage(page);
   };
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!email.trim()) {
-      setError('メールアドレスを入力してください。');
+      setError("メールアドレスを入力してください。");
       return;
     }
 
@@ -202,9 +240,12 @@ export default function PdfTokenPage({ params }: PdfTokenPageProps) {
 
     try {
       const res = await fetch(`/api/pdf/${token}/open`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ viewer_email: email.trim() }),
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          viewer_email: email.trim(),
+          session_id: getOrCreateSessionId(),
+        }),
       });
       if (!res.ok) {
         if (res.status === 404) {
@@ -215,7 +256,7 @@ export default function PdfTokenPage({ params }: PdfTokenPageProps) {
           setRevoked(true);
           return;
         }
-        throw new Error('PDF情報の取得に失敗しました');
+        throw new Error("PDF情報の取得に失敗しました");
       }
 
       const data = await res.json();
@@ -223,7 +264,7 @@ export default function PdfTokenPage({ params }: PdfTokenPageProps) {
       setSubmitted(true);
     } catch (err) {
       console.error(err);
-      setError('PDFの読み込みに失敗しました。');
+      setError("PDFの読み込みに失敗しました。");
     } finally {
       setLoading(false);
     }
@@ -233,7 +274,7 @@ export default function PdfTokenPage({ params }: PdfTokenPageProps) {
   useEffect(() => {
     async function checkToken() {
       try {
-        const res = await fetch(`/api/pdf/${token}`, { method: 'HEAD' });
+        const res = await fetch(`/api/pdf/${token}`, { method: "HEAD" });
         if (res.status === 404) setNotFound(true);
         if (res.status === 410) setRevoked(true);
       } catch {
@@ -243,54 +284,36 @@ export default function PdfTokenPage({ params }: PdfTokenPageProps) {
     checkToken();
   }, [token]);
 
-  // リセット
-  const handleReset = () => {
-    // 最終状態をベストエフォートで保存
-    if (submitted && email.trim()) {
-      void fetch(`/api/pdf/${token}/progress`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          viewer_email: email.trim(),
-          read_percentage: stats.readPercentage,
-          max_page_reached: stats.maxPageReached,
-          elapsed_seconds: stats.elapsedSeconds,
-        }),
-      }).catch(() => {
-        // ignore
-      });
-    }
+  // beforeunloadで最終進捗を送信
+  useEffect(() => {
+    if (!submitted || !email.trim()) return;
 
-    setSubmitted(false);
-    setEmail('');
-    setPdfInfo(null);
-    pdfDocRef.current = null;
-    setCurrentPage(1);
-    setTotalPages(0);
-    setPageImage(null);
-    setStats({
-      currentPage: 1,
-      totalPages: 0,
-      maxPageReached: 1,
-      readPercentage: 0,
-      elapsedSeconds: 0,
-    });
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-    }
-  };
+    const handleBeforeUnload = () => {
+      // sendBeaconを使用して非同期でも送信保証
+      const data = JSON.stringify({
+        viewer_email: email.trim(),
+        read_percentage: stats.readPercentage,
+        max_page_reached: stats.maxPageReached,
+        elapsed_seconds: activeElapsedRef.current,
+      });
+      navigator.sendBeacon(`/api/pdf/${token}/progress`, data);
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [submitted, email, token, stats.readPercentage, stats.maxPageReached]);
 
   if (notFound || revoked) {
     return (
       <div className="min-h-screen bg-slate-50 px-4 py-12 text-slate-900 flex items-center justify-center">
         <div className="text-center">
           <h1 className="text-2xl font-semibold text-slate-900">
-            {notFound ? 'PDFが見つかりません' : 'この資料は削除されました'}
+            {notFound ? "PDFが見つかりません" : "この資料は削除されました"}
           </h1>
           <p className="mt-2 text-slate-600">
             {notFound
-              ? 'このリンクは無効か、PDFが削除された可能性があります。'
-              : '指定された資料は削除済みのため閲覧できません。'}
+              ? "このリンクは無効か、PDFが削除された可能性があります。"
+              : "指定された資料は削除済みのため閲覧できません。"}
           </p>
         </div>
       </div>
@@ -305,21 +328,34 @@ export default function PdfTokenPage({ params }: PdfTokenPageProps) {
           <div className="rounded-xl border border-slate-700 bg-white shadow-2xl overflow-hidden">
             {/* ヘッダー */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
-              <span className="text-sm font-medium text-slate-900">Cookie とプライバシーについて</span>
+              <span className="text-sm font-medium text-slate-900">
+                Cookie とプライバシーについて
+              </span>
               <button
                 onClick={() => setShowPrivacyModal(false)}
                 className="text-slate-400 hover:text-slate-600 transition-colors"
                 aria-label="閉じる"
               >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                <svg
+                  className="w-5 h-5"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M6 18L18 6M6 6l12 12"
+                  />
                 </svg>
               </button>
             </div>
             {/* コンテンツ */}
             <div className="px-4 py-3 text-xs text-slate-600 leading-relaxed">
               <p>
-                弊社では、Cookie を使用して、サービスの提供、改善、保護、宣伝を行っています。
+                弊社では、Cookie
+                を使用して、サービスの提供、改善、保護、宣伝を行っています。
                 詳細については、
                 <a
                   href="https://voiq.jp/404-1"
@@ -338,7 +374,8 @@ export default function PdfTokenPage({ params }: PdfTokenPageProps) {
                 >
                   プライバシー ポリシーに関するよくある質問
                 </a>
-                をご覧ください。以下の「Cookie をカスタマイズする」ボタンを使用して、「私の個人データを第三者に販売または共有しない」設定を含む、個人設定を管理できます。
+                をご覧ください。以下の「Cookie
+                をカスタマイズする」ボタンを使用して、「私の個人データを第三者に販売または共有しない」設定を含む、個人設定を管理できます。
               </p>
             </div>
             {/* フッターボタン */}
@@ -367,7 +404,9 @@ export default function PdfTokenPage({ params }: PdfTokenPageProps) {
           </div>
         </div>
       )}
-      <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 rounded-3xl bg-white p-6 shadow-xl ring-1 ring-slate-100">
+      <div
+        className={`mx-auto flex w-full flex-col gap-6 rounded-3xl bg-white p-6 shadow-xl ring-1 ring-slate-100 ${submitted ? "max-w-7xl" : "max-w-4xl"}`}
+      >
         {!submitted && (
           <header className="text-center">
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -381,7 +420,10 @@ export default function PdfTokenPage({ params }: PdfTokenPageProps) {
         )}
 
         {!submitted ? (
-          <form onSubmit={handleSubmit} className="flex flex-col gap-4 max-w-md mx-auto w-full">
+          <form
+            onSubmit={handleSubmit}
+            className="flex flex-col gap-4 max-w-md mx-auto w-full"
+          >
             <label className="text-sm font-medium text-slate-700">
               メールアドレス
               <input
@@ -400,7 +442,7 @@ export default function PdfTokenPage({ params }: PdfTokenPageProps) {
               disabled={loading}
               className="rounded-xl bg-slate-900 px-4 py-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? '読み込み中...' : '次へ'}
+              {loading ? "読み込み中..." : "次へ"}
             </button>
           </form>
         ) : pdfInfo ? (
@@ -412,8 +454,18 @@ export default function PdfTokenPage({ params }: PdfTokenPageProps) {
                 disabled={currentPage <= 1 || pageLoading}
                 className="flex items-center gap-1 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed"
               >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                <svg
+                  className="w-4 h-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M15 19l-7-7 7-7"
+                  />
                 </svg>
                 前へ
               </button>
@@ -423,40 +475,44 @@ export default function PdfTokenPage({ params }: PdfTokenPageProps) {
                 className="flex items-center gap-1 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed"
               >
                 次へ
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                <svg
+                  className="w-4 h-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M9 5l7 7-7 7"
+                  />
                 </svg>
               </button>
             </div>
 
             {/* PDF表示エリア */}
-            <div className="rounded-2xl border border-slate-200 overflow-hidden bg-slate-100 flex items-center justify-center min-h-[60vh]">
+            <div
+              className="rounded-2xl border border-slate-200 overflow-hidden bg-slate-100 flex items-center justify-center"
+              style={{ height: "75vh" }}
+            >
               {pageLoading || !pageImage ? (
                 <div className="text-slate-500 py-20">
-                  {pageLoading ? 'ページ読み込み中...' : 'PDF読み込み中...'}
+                  {pageLoading ? "ページ読み込み中..." : "PDF読み込み中..."}
                 </div>
               ) : (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={pageImage}
                   alt={`ページ ${currentPage}`}
-                  className="max-w-full h-auto"
+                  className="h-full w-auto object-contain"
                 />
               )}
               <canvas ref={canvasRef} className="hidden" />
             </div>
-
-            <button
-              type="button"
-              onClick={handleReset}
-              className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
-            >
-              別のアドレスで閲覧する
-            </button>
           </div>
         ) : null}
       </div>
     </div>
   );
 }
-

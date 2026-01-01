@@ -11,8 +11,12 @@
   --card: #ffffff;
   --card-foreground: #0f172a;
   --border: #e2e8f0;
-  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  --font-sans:
+    var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono:
+    var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco,
+    Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -37,8 +41,8 @@ html {
 }
 
 /* Checkbox / Radio の視認性を上げる（ライトモードで黒潰れ防止） */
-input[type='checkbox'],
-input[type='radio'] {
+input[type="checkbox"],
+input[type="radio"] {
   accent-color: var(--primary);
   background-color: var(--card);
   border: 1.5px solid var(--border);
@@ -47,8 +51,8 @@ input[type='radio'] {
 
 /* 未チェック時でも枠がはっきり見えるように（ライトモード） */
 @media (prefers-color-scheme: light) {
-  input[type='checkbox']:not(:checked),
-  input[type='radio']:not(:checked) {
+  input[type="checkbox"]:not(:checked),
+  input[type="radio"]:not(:checked) {
     color-scheme: light;
     background-color: #ffffff;
     border-color: #cbd5e1;
@@ -57,15 +61,14 @@ input[type='radio'] {
 }
 
 @media (prefers-color-scheme: dark) {
-  input[type='checkbox'],
-  input[type='radio'] {
+  input[type="checkbox"],
+  input[type="radio"] {
     color-scheme: dark;
     background-color: #0f172a;
     border-color: #1e293b;
     box-shadow: none;
   }
 }
-
 
 /* Remove explicit media query for light/dark preference to force dark theme */
 body {
@@ -145,6 +148,19 @@ body {
   transform: scale(0.98);
 }
 
+.btn-primary:disabled {
+  background: var(--muted);
+  color: var(--muted-foreground);
+  cursor: not-allowed;
+  box-shadow: none;
+  opacity: 0.6;
+}
+
+.btn-primary:disabled:hover {
+  filter: none;
+  box-shadow: none;
+}
+
 .btn-secondary {
   display: inline-flex;
   align-items: center;
@@ -166,10 +182,26 @@ body {
   border-color: var(--muted-foreground);
 }
 
+.btn-secondary:disabled {
+  background: var(--muted);
+  color: var(--muted-foreground);
+  border-color: var(--border);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.btn-secondary:disabled:hover {
+  background: var(--muted);
+  border-color: var(--border);
+}
+
 .dropzone {
   border: 2px dashed var(--border);
   background: rgba(255, 255, 255, 0.9);
-  transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease,
+    transform 0.2s ease;
 }
 
 .dropzone:hover {
@@ -199,7 +231,9 @@ body {
   background: var(--card);
   padding: 1.5rem;
   box-shadow: 0 10px 25px rgba(15, 23, 42, 0.08);
-  transition: box-shadow 0.2s ease, transform 0.2s ease;
+  transition:
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
   backdrop-filter: blur(8px);
 }
 
@@ -217,68 +251,146 @@ body {
 }
 
 /* Animations */
-.perspective-1000 { perspective: 1000px; }
+.perspective-1000 {
+  perspective: 1000px;
+}
 
 @keyframes fadeInUp {
-  from { opacity: 0; transform: translateY(24px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @keyframes float {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-10px); }
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
 }
 
 @keyframes pulse-glow {
-  0%, 100% { opacity: 0.5; transform: scale(1); }
-  50% { opacity: 0.8; transform: scale(1.05); }
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(1.05);
+  }
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 @keyframes bounceSubtle {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-6px); }
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
 }
 
 @keyframes scaleIn {
-  0% { opacity: 0; transform: scale(0.95); }
-  100% { opacity: 1; transform: scale(1); }
+  0% {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 @keyframes drawLine {
-  0% { height: 0; opacity: 0; }
-  50% { height: 100%; opacity: 1; }
-  100% { height: 100%; opacity: 0; }
+  0% {
+    height: 0;
+    opacity: 0;
+  }
+  50% {
+    height: 100%;
+    opacity: 1;
+  }
+  100% {
+    height: 100%;
+    opacity: 0;
+  }
 }
 
-.animate-fade-in-up { animation: fadeInUp 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) forwards; }
-.animate-fade-in { animation: fadeIn 0.6s ease forwards; }
-.animate-bounce-subtle { animation: bounceSubtle 2.4s ease-in-out infinite; }
-.animate-scale-in { animation: scaleIn 0.4s ease forwards; }
-.animate-float { animation: float 6s ease-in-out infinite; }
-.animate-pulse-glow { animation: pulse-glow 3s ease-in-out infinite; }
-.animate-draw-line { animation: drawLine 2s ease-in-out infinite; }
+.animate-fade-in-up {
+  animation: fadeInUp 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+.animate-fade-in {
+  animation: fadeIn 0.6s ease forwards;
+}
+.animate-bounce-subtle {
+  animation: bounceSubtle 2.4s ease-in-out infinite;
+}
+.animate-scale-in {
+  animation: scaleIn 0.4s ease forwards;
+}
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+}
+.animate-pulse-glow {
+  animation: pulse-glow 3s ease-in-out infinite;
+}
+.animate-draw-line {
+  animation: drawLine 2s ease-in-out infinite;
+}
 
 @keyframes calendarFadeIn {
-  0% { opacity: 0; transform: scale(0.8); }
-  100% { opacity: 1; transform: scale(1); }
+  0% {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
-.animate-calendar-fade-in { animation: calendarFadeIn 0.4s ease-out forwards; }
+.animate-calendar-fade-in {
+  animation: calendarFadeIn 0.4s ease-out forwards;
+}
 
-.delay-100 { animation-delay: 100ms; }
-.delay-200 { animation-delay: 200ms; }
-.delay-300 { animation-delay: 300ms; }
-.delay-400 { animation-delay: 400ms; }
-.delay-500 { animation-delay: 500ms; }
+.delay-100 {
+  animation-delay: 100ms;
+}
+.delay-200 {
+  animation-delay: 200ms;
+}
+.delay-300 {
+  animation-delay: 300ms;
+}
+.delay-400 {
+  animation-delay: 400ms;
+}
+.delay-500 {
+  animation-delay: 500ms;
+}
 
 .reveal-on-scroll {
   opacity: 0;
   transform: translateY(24px);
-  transition: opacity 0.8s cubic-bezier(0.2, 0.8, 0.2, 1), transform 0.8s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition:
+    opacity 0.8s cubic-bezier(0.2, 0.8, 0.2, 1),
+    transform 0.8s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .reveal-on-scroll.is-visible {
   opacity: 1;
@@ -286,7 +398,8 @@ body {
 }
 
 .logo-apotto {
-  font-family: 'Space Grotesk', 'Sora', 'Inter', 'Hiragino Kaku Gothic ProN', sans-serif;
+  font-family:
+    "Space Grotesk", "Sora", "Inter", "Hiragino Kaku Gothic ProN", sans-serif;
   letter-spacing: 0.18em;
   text-transform: lowercase;
   font-weight: 700;
