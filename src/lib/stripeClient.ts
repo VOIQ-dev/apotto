@@ -17,7 +17,7 @@ type CheckoutSession = {
 };
 
 const stripeApiVersion =
-  "2025-11-17.clover" satisfies Stripe.StripeConfig["apiVersion"];
+  "2025-12-15.clover" satisfies Stripe.StripeConfig["apiVersion"];
 
 function getStripe(): Stripe {
   const secret = process.env.STRIPE_SECRET_KEY;

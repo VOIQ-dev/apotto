@@ -1,10 +1,10 @@
-'use client';
+"use client";
 
-import { FormEvent, useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import type { SupabaseClient } from '@supabase/supabase-js';
+import { FormEvent, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { createSupabaseBrowserClient } from '@/lib/supabase';
+import { createSupabaseBrowserClient } from "@/lib/supabase";
 
 type MeResponse = {
   success?: boolean;
@@ -16,15 +16,15 @@ type MeResponse = {
 export default function FirstLoginPage() {
   const router = useRouter();
   const supabaseRef = useRef<SupabaseClient | null>(null);
-  if (typeof window !== 'undefined' && !supabaseRef.current) {
+  if (typeof window !== "undefined" && !supabaseRef.current) {
     supabaseRef.current = createSupabaseBrowserClient();
   }
   const supabase = supabaseRef.current;
 
   const [loading, setLoading] = useState(true);
-  const [email, setEmail] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
+  const [email, setEmail] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -33,28 +33,28 @@ export default function FirstLoginPage() {
     async function load() {
       setError(null);
       try {
-        const res = await fetch('/api/account/me');
+        const res = await fetch("/api/account/me");
         const data = (await res.json().catch(() => ({}))) as MeResponse;
         if (!active) return;
 
         if (!res.ok) {
-          router.replace('/login');
+          router.replace("/login");
           return;
         }
 
         const must = Boolean(data.mustChangePassword);
-        const userEmail = String(data.user?.email ?? '');
+        const userEmail = String(data.user?.email ?? "");
         setEmail(userEmail);
 
         if (!must) {
-          router.replace('/ai-custom');
+          router.replace("/ai-custom");
           return;
         }
 
         setLoading(false);
       } catch (e) {
         if (!active) return;
-        setError(e instanceof Error ? e.message : '読み込みに失敗しました');
+        setError(e instanceof Error ? e.message : "読み込みに失敗しました");
         setLoading(false);
       }
     }
@@ -71,17 +71,17 @@ export default function FirstLoginPage() {
     const p1 = newPassword.trim();
     const p2 = confirmPassword.trim();
     if (p1.length < 8) {
-      setError('新しいパスワードは8文字以上にしてください');
+      setError("新しいパスワードは8文字以上にしてください");
       return;
     }
     if (p1 !== p2) {
-      setError('パスワード（確認）が一致しません');
+      setError("パスワード（確認）が一致しません");
       return;
     }
 
     setSubmitting(true);
     try {
-      if (!supabase) throw new Error('クライアント未初期化');
+      if (!supabase) throw new Error("クライアント未初期化");
       const { error: updateError } = await supabase.auth.updateUser({
         password: p1,
         data: { must_change_password: false },
@@ -89,13 +89,15 @@ export default function FirstLoginPage() {
       if (updateError) throw updateError;
 
       // DB側の状態も active に更新
-      await fetch('/api/account/activate', { method: 'POST' }).catch(() => null);
+      await fetch("/api/account/activate", { method: "POST" }).catch(
+        () => null,
+      );
 
       // セッションを一旦切って、新しいパスワードで再ログインする導線にする
-      await fetch('/api/auth/logout', { method: 'POST' }).catch(() => null);
-      router.replace('/login?changed=1');
+      await fetch("/api/auth/logout", { method: "POST" }).catch(() => null);
+      router.replace("/login?changed=1");
     } catch (e) {
-      setError(e instanceof Error ? e.message : '更新に失敗しました');
+      setError(e instanceof Error ? e.message : "更新に失敗しました");
     } finally {
       setSubmitting(false);
     }
@@ -105,10 +107,9 @@ export default function FirstLoginPage() {
     <div className="flex min-h-screen flex-col items-center justify-center bg-background p-4 text-foreground">
       <div className="w-full max-w-[420px] animate-in fade-in zoom-in-95 duration-500">
         <div className="mb-6 text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-xl font-bold text-primary">
-            A
-          </div>
-          <h1 className="text-2xl font-bold tracking-tight">初回ログイン設定</h1>
+          <h1 className="text-2xl font-bold tracking-tight">
+            初回ログイン設定
+          </h1>
           <p className="mt-2 text-sm text-muted-foreground">
             まずパスワードを変更してください。
           </p>
@@ -122,7 +123,10 @@ export default function FirstLoginPage() {
           ) : (
             <form onSubmit={handleSubmit} className="space-y-5">
               <div className="text-xs text-muted-foreground">
-                ログイン中: <span className="font-medium text-foreground">{email || '-'}</span>
+                ログイン中:{" "}
+                <span className="font-medium text-foreground">
+                  {email || "-"}
+                </span>
               </div>
 
               <div className="space-y-1.5">
@@ -161,8 +165,12 @@ export default function FirstLoginPage() {
                 </div>
               )}
 
-              <button type="submit" disabled={submitting} className="btn-primary w-full">
-                {submitting ? '更新中...' : 'パスワードを更新してログインへ'}
+              <button
+                type="submit"
+                disabled={submitting}
+                className="btn-primary w-full"
+              >
+                {submitting ? "更新中..." : "パスワードを更新してログインへ"}
               </button>
             </form>
           )}
@@ -171,8 +179,3 @@ export default function FirstLoginPage() {
     </div>
   );
 }
-
-
-
-
-

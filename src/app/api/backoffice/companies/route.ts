@@ -36,7 +36,7 @@ type CreateCompanyBody = {
 };
 
 export async function GET(request: NextRequest) {
-  const denied = requireBackofficeAuth(request);
+  const denied = await requireBackofficeAuth(request);
   if (denied) return denied;
 
   try {
@@ -83,7 +83,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const denied = requireBackofficeAuth(request);
+  const denied = await requireBackofficeAuth(request);
   if (denied) return denied;
 
   try {

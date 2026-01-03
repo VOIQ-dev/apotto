@@ -21,7 +21,7 @@ function generatePassword(): string {
 }
 
 export async function POST(request: NextRequest, context: RouteContext) {
-  const denied = requireBackofficeAuth(request);
+  const denied = await requireBackofficeAuth(request);
   if (denied) return denied;
 
   try {

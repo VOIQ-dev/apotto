@@ -1,24 +1,24 @@
-import { NextResponse } from 'next/server';
-import type { NextRequest } from 'next/server';
-import { createServerClient } from '@supabase/ssr';
+import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+import { createServerClient } from "@supabase/ssr";
 
-const AUTH_COOKIE = 'apotto_auth';
 const PUBLIC_PATHS = new Set([
-  '/',
-  '/login',
-  '/favicon.ico',
-  '/billing',
-  '/billing/success',
-  '/billing/cancel',
+  "/",
+  "/login",
+  "/favicon.ico",
+  "/billing",
+  "/billing/success",
+  "/billing/cancel",
 ]);
 // プレフィックスで公開するパス
-const PUBLIC_PREFIXES = ['/pdf/', '/billing/'];
-const FIRST_LOGIN_PATH = '/first-login';
-const BACKOFFICE_PREFIX = '/backoffice';
-const BACKOFFICE_LOGIN_PATH = '/backoffice/login';
+const PUBLIC_PREFIXES = ["/pdf/", "/billing/"];
+const FIRST_LOGIN_PATH = "/first-login";
+const BACKOFFICE_PREFIX = "/backoffice";
+const BACKOFFICE_LOGIN_PATH = "/backoffice/login";
 
 // 静的アセットの拡張子
-const STATIC_EXTENSIONS = /\.(png|jpg|jpeg|gif|svg|ico|webp|css|js|woff|woff2|ttf|eot|mjs)$/i;
+const STATIC_EXTENSIONS =
+  /\.(png|jpg|jpeg|gif|svg|ico|webp|css|js|woff|woff2|ttf|eot|mjs)$/i;
 
 type CookieMutation = {
   name: string;
@@ -34,7 +34,10 @@ function getPublicSupabaseEnv() {
   return { url, anonKey };
 }
 
-function applyAuthCookies(response: NextResponse, cookieMutations: CookieMutation[]) {
+function applyAuthCookies(
+  response: NextResponse,
+  cookieMutations: CookieMutation[],
+) {
   for (const c of cookieMutations) {
     response.cookies.set(c.name, c.value, c.options);
   }
@@ -45,9 +48,9 @@ export async function middleware(request: NextRequest) {
 
   // 静的ファイル・Next.js内部パス・APIはスキップ
   if (
-    pathname.startsWith('/_next') ||
-    pathname.startsWith('/api') ||
-    pathname.startsWith('/static') ||
+    pathname.startsWith("/_next") ||
+    pathname.startsWith("/api") ||
+    pathname.startsWith("/static") ||
     STATIC_EXTENSIONS.test(pathname)
   ) {
     return NextResponse.next();
@@ -56,16 +59,18 @@ export async function middleware(request: NextRequest) {
   // Backoffice はアプリ認証とは別系統で扱う（アプリ未ログインでも /login へ飛ばさない）
   if (pathname.startsWith(BACKOFFICE_PREFIX)) {
     const isBackofficeLogin = pathname === BACKOFFICE_LOGIN_PATH;
-    const isBackofficeAuthenticated =
-      request.cookies.get('backoffice_auth')?.value === '1';
 
-    if (!isBackofficeAuthenticated && !isBackofficeLogin) {
+    // JWT認証を使用した認証チェック（非同期）
+    const { isBackofficeAuthenticated } = await import("@/lib/backofficeAuth");
+    const isAuthenticated = await isBackofficeAuthenticated(request);
+
+    if (!isAuthenticated && !isBackofficeLogin) {
       const loginUrl = new URL(BACKOFFICE_LOGIN_PATH, request.url);
       return NextResponse.redirect(loginUrl);
     }
 
-    if (isBackofficeAuthenticated && isBackofficeLogin) {
-      const companiesUrl = new URL('/backoffice/companies', request.url);
+    if (isAuthenticated && isBackofficeLogin) {
+      const companiesUrl = new URL("/backoffice/companies", request.url);
       return NextResponse.redirect(companiesUrl);
     }
 
@@ -76,7 +81,6 @@ export async function middleware(request: NextRequest) {
   const isPublic =
     PUBLIC_PATHS.has(pathname) ||
     PUBLIC_PREFIXES.some((prefix) => pathname.startsWith(prefix));
-  const isLegacyAuthenticated = request.cookies.get(AUTH_COOKIE)?.value === '1';
 
   // Supabase Auth（あれば優先）: セッション確認 + 必要なら Cookie を更新
   const env = getPublicSupabaseEnv();
@@ -94,7 +98,7 @@ export async function middleware(request: NextRequest) {
             remove(name, options) {
               cookieMutations.push({
                 name,
-                value: '',
+                value: "",
                 options: { ...options, maxAge: 0 },
               });
             },
@@ -106,14 +110,14 @@ export async function middleware(request: NextRequest) {
       })()
     : null;
 
-  const isAuthenticated = Boolean(supabaseUser) || isLegacyAuthenticated;
+  const isAuthenticated = Boolean(supabaseUser);
   const mustChangePassword = Boolean(
     (supabaseUser?.user_metadata as Record<string, unknown> | null | undefined)
-      ?.must_change_password
+      ?.must_change_password,
   );
 
   if (!isAuthenticated && !isPublic) {
-    const loginUrl = new URL('/login', request.url);
+    const loginUrl = new URL("/login", request.url);
     const res = NextResponse.redirect(loginUrl);
     applyAuthCookies(res, cookieMutations);
     return res;
@@ -139,6 +143,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 };
-

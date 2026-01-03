@@ -2,14 +2,16 @@ import { createServerClient } from "@supabase/ssr";
 import { NextRequest, NextResponse } from "next/server";
 
 import { createSupabaseServiceClient } from "@/lib/supabaseServer";
+import { LoginSchema, formatZodErrors } from "@/lib/schemas";
+import {
+  checkRateLimit,
+  RateLimitPresets,
+  addRateLimitHeaders,
+} from "@/lib/rateLimit";
+import { ErrorMessages, createErrorResponse, logError } from "@/lib/errors";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-type RequestBody = {
-  email?: string;
-  password?: string;
-};
 
 type CookieMutation = {
   name: string;
@@ -63,18 +65,37 @@ function applyAuthCookies(
 
 export async function POST(request: NextRequest) {
   try {
-    const body = (await request.json().catch(() => ({}))) as RequestBody;
-    const email = String(body.email ?? "")
-      .trim()
-      .toLowerCase();
-    const password = String(body.password ?? "");
+    // レート制限チェック（ログイン試行回数を制限）
+    const rateLimitResult = checkRateLimit(request, RateLimitPresets.login);
 
-    if (!email || !password) {
-      return NextResponse.json(
-        { error: "email と password は必須です" },
+    if (!rateLimitResult.allowed) {
+      const response = NextResponse.json(
+        createErrorResponse(ErrorMessages.RATE_LIMIT.TOO_MANY_LOGIN_ATTEMPTS, {
+          retryAfter: Math.ceil((rateLimitResult.resetAt - Date.now()) / 1000),
+        }),
+        { status: 429 },
+      );
+      addRateLimitHeaders(response.headers, rateLimitResult);
+      return response;
+    }
+
+    const rawBody = await request.json().catch(() => ({}));
+
+    // Zodバリデーション
+    const validation = LoginSchema.safeParse(rawBody);
+
+    if (!validation.success) {
+      const { message, fields } = formatZodErrors(validation.error);
+      const response = NextResponse.json(
+        { error: message, errors: fields },
         { status: 400 },
       );
+      addRateLimitHeaders(response.headers, rateLimitResult);
+      return response;
     }
+
+    const { email: rawEmail, password } = validation.data;
+    const email = rawEmail.trim().toLowerCase();
 
     const { supabase, cookieMutations } = createAuthClientForRequest(request);
     const { data, error } = await supabase.auth.signInWithPassword({
@@ -84,15 +105,13 @@ export async function POST(request: NextRequest) {
 
     if (error || !data.session || !data.user) {
       const raw = String(error?.message ?? "");
-      const msg = /email not confirmed/i.test(raw)
-        ? "メールアドレスが未確認です（Email not confirmed）"
-        : /invalid login credentials/i.test(raw)
-          ? "メールアドレスまたはパスワードが正しくありません"
-          : "ログインに失敗しました";
-      const res = NextResponse.json(
-        { error: msg },
-        { status: /email not confirmed/i.test(raw) ? 403 : 401 },
-      );
+      const isEmailNotConfirmed = /email not confirmed/i.test(raw);
+      const msg = isEmailNotConfirmed
+        ? ErrorMessages.AUTH.EMAIL_NOT_CONFIRMED
+        : ErrorMessages.AUTH.INVALID_CREDENTIALS;
+      const res = NextResponse.json(createErrorResponse(msg), {
+        status: isEmailNotConfirmed ? 403 : 401,
+      });
       applyAuthCookies(res, cookieMutations);
       return res;
     }
@@ -105,7 +124,7 @@ export async function POST(request: NextRequest) {
       .eq("email", email)
       .maybeSingle();
     if (accountErr) {
-      console.error("[auth/login] accounts lookup failed", accountErr);
+      logError("auth/login", accountErr, { context: "accounts lookup failed" });
     }
     const accountId = String(
       (account as { id?: unknown } | null)?.id ?? "",
@@ -113,7 +132,7 @@ export async function POST(request: NextRequest) {
     if (!accountId) {
       await supabase.auth.signOut().catch(() => null);
       const res = NextResponse.json(
-        { error: "アカウントが見つかりません" },
+        createErrorResponse(ErrorMessages.AUTH.ACCOUNT_NOT_FOUND),
         { status: 403 },
       );
       applyAuthCookies(res, cookieMutations);
@@ -140,7 +159,7 @@ export async function POST(request: NextRequest) {
       .update(patch)
       .eq("id", accountId);
     if (updateErr) {
-      console.error("[auth/login] accounts update failed", updateErr);
+      logError("auth/login", updateErr, { context: "accounts update failed" });
     }
 
     const res = NextResponse.json({
@@ -152,11 +171,12 @@ export async function POST(request: NextRequest) {
       },
     });
     applyAuthCookies(res, cookieMutations);
+    addRateLimitHeaders(res.headers, rateLimitResult);
     return res;
   } catch (err) {
-    console.error("[auth/login] Unexpected error", err);
+    logError("auth/login", err);
     return NextResponse.json(
-      { error: "予期しないエラーが発生しました" },
+      createErrorResponse(ErrorMessages.SERVER.INTERNAL_ERROR),
       { status: 500 },
     );
   }

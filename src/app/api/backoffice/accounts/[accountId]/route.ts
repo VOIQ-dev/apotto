@@ -17,7 +17,7 @@ type UpdateAccountBody = {
 };
 
 export async function PATCH(request: NextRequest, context: RouteContext) {
-  const denied = requireBackofficeAuth(request);
+  const denied = await requireBackofficeAuth(request);
   if (denied) return denied;
 
   try {
@@ -104,7 +104,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 }
 
 export async function DELETE(request: NextRequest, context: RouteContext) {
-  const denied = requireBackofficeAuth(request);
+  const denied = await requireBackofficeAuth(request);
   if (denied) return denied;
 
   try {

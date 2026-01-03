@@ -1,114 +1,94 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from "next/server";
+import {
+  ContactFormSchema,
+  formatZodErrors,
+  type ContactFormData,
+  type ContactDemoFormData,
+} from "@/lib/schemas";
+import {
+  checkRateLimit,
+  RateLimitPresets,
+  addRateLimitHeaders,
+} from "@/lib/rateLimit";
+import { ErrorMessages, createErrorResponse, logError } from "@/lib/errors";
 
-const SLACK_WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL || '';
+const SLACK_WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL || "";
 
-type DownloadFormData = {
-  formType: 'download';
-  lastName: string;
-  firstName: string;
-  companyName: string;
-  department: string;
-  position: string;
-  email: string;
-  phone: string;
-  howDidYouHear: string;
-  howDidYouHearOther?: string;
-};
-
-type DemoFormData = {
-  formType: 'demo';
-  lastName: string;
-  firstName: string;
-  companyName: string;
-  department: string;
-  position: string;
-  email: string;
-  phone: string;
-  employeeCount: string;
-  serviceUrl: string;
-  averageOrderValue: string;
-  howDidYouHear: string;
-  howDidYouHearOther?: string;
-  expectedStartDate: string;
-  content: string;
-};
-
-type FormData = DownloadFormData | DemoFormData;
-
-function buildSlackMessage(data: FormData): object {
-  const isDemo = data.formType === 'demo';
-  const formTypeLabel = isDemo ? '🖥️ 無料デモ申し込み' : '📄 資料ダウンロード';
-  const howDidYouHear = data.howDidYouHear === 'その他' && data.howDidYouHearOther 
-    ? `その他: ${data.howDidYouHearOther}` 
-    : data.howDidYouHear;
+function buildSlackMessage(data: ContactFormData): object {
+  const isDemo = data.formType === "demo";
+  const formTypeLabel = isDemo ? "🖥️ 無料デモ申し込み" : "📄 資料ダウンロード";
+  const howDidYouHear =
+    data.howDidYouHear === "その他" && data.howDidYouHearOther
+      ? `その他: ${data.howDidYouHearOther}`
+      : data.howDidYouHear;
 
   const baseFields = [
     {
-      type: 'mrkdwn',
+      type: "mrkdwn",
       text: `*氏名*\n${data.lastName} ${data.firstName}`,
     },
     {
-      type: 'mrkdwn',
+      type: "mrkdwn",
       text: `*会社名*\n${data.companyName}`,
     },
     {
-      type: 'mrkdwn',
+      type: "mrkdwn",
       text: `*部署名*\n${data.department}`,
     },
     {
-      type: 'mrkdwn',
+      type: "mrkdwn",
       text: `*役職名*\n${data.position}`,
     },
     {
-      type: 'mrkdwn',
+      type: "mrkdwn",
       text: `*メールアドレス*\n${data.email}`,
     },
     {
-      type: 'mrkdwn',
+      type: "mrkdwn",
       text: `*電話番号*\n${data.phone}`,
     },
     {
-      type: 'mrkdwn',
+      type: "mrkdwn",
       text: `*認知経路*\n${howDidYouHear}`,
     },
   ];
 
   if (isDemo) {
-    const demoData = data as DemoFormData;
+    const demoData = data as ContactDemoFormData;
     baseFields.push(
       {
-        type: 'mrkdwn',
+        type: "mrkdwn",
         text: `*従業員規模*\n${demoData.employeeCount}`,
       },
       {
-        type: 'mrkdwn',
+        type: "mrkdwn",
         text: `*対象サービスURL*\n${demoData.serviceUrl}`,
       },
       {
-        type: 'mrkdwn',
+        type: "mrkdwn",
         text: `*受注平均単価*\n${demoData.averageOrderValue}`,
       },
       {
-        type: 'mrkdwn',
+        type: "mrkdwn",
         text: `*利用開始想定時期*\n${demoData.expectedStartDate}`,
-      }
+      },
     );
   }
 
   const blocks: object[] = [
     {
-      type: 'header',
+      type: "header",
       text: {
-        type: 'plain_text',
+        type: "plain_text",
         text: `${formTypeLabel}`,
         emoji: true,
       },
     },
     {
-      type: 'divider',
+      type: "divider",
     },
     {
-      type: 'section',
+      type: "section",
       fields: baseFields.slice(0, 10), // Slackの制限: 1セクションに最大10フィールド
     },
   ];
@@ -116,26 +96,26 @@ function buildSlackMessage(data: FormData): object {
   // 10フィールドを超える場合は追加セクションを作成
   if (baseFields.length > 10) {
     blocks.push({
-      type: 'section',
+      type: "section",
       fields: baseFields.slice(10),
     });
   }
 
   // デモの場合はお問い合わせ背景を追加
   if (isDemo) {
-    const demoData = data as DemoFormData;
+    const demoData = data as ContactDemoFormData;
     if (demoData.content) {
       blocks.push(
         {
-          type: 'divider',
+          type: "divider",
         },
         {
-          type: 'section',
+          type: "section",
           text: {
-            type: 'mrkdwn',
+            type: "mrkdwn",
             text: `*お問い合わせ背景(詳細)*\n${demoData.content}`,
           },
-        }
+        },
       );
     }
   }
@@ -143,17 +123,17 @@ function buildSlackMessage(data: FormData): object {
   // タイムスタンプを追加
   blocks.push(
     {
-      type: 'divider',
+      type: "divider",
     },
     {
-      type: 'context',
+      type: "context",
       elements: [
         {
-          type: 'mrkdwn',
-          text: `送信日時: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}`,
+          type: "mrkdwn",
+          text: `送信日時: ${new Date().toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })}`,
         },
       ],
-    }
+    },
   );
 
   return {
@@ -164,44 +144,74 @@ function buildSlackMessage(data: FormData): object {
 
 export async function POST(request: NextRequest) {
   try {
-    const data: FormData = await request.json();
+    // レート制限チェック（問い合わせフォームはスパム防止のため厳格に）
+    const rateLimitResult = checkRateLimit(
+      request,
+      RateLimitPresets.contactForm,
+    );
 
-    // バリデーション
-    if (!data.lastName || !data.firstName || !data.companyName || !data.email) {
-      return NextResponse.json(
-        { message: '必須項目が入力されていません' },
-        { status: 400 }
+    if (!rateLimitResult.allowed) {
+      const response = NextResponse.json(
+        createErrorResponse(ErrorMessages.RATE_LIMIT.EXCEEDED, {
+          retryAfter: Math.ceil((rateLimitResult.resetAt - Date.now()) / 1000),
+        }),
+        { status: 429 },
       );
+      addRateLimitHeaders(response.headers, rateLimitResult);
+      return response;
     }
+
+    const rawData = await request.json();
+
+    // Zodによるバリデーション
+    const validation = ContactFormSchema.safeParse(rawData);
+
+    if (!validation.success) {
+      const { message, fields } = formatZodErrors(validation.error);
+      const response = NextResponse.json(
+        { message, errors: fields },
+        { status: 400 },
+      );
+      addRateLimitHeaders(response.headers, rateLimitResult);
+      return response;
+    }
+
+    const data = validation.data;
 
     // Slackに通知
     const slackMessage = buildSlackMessage(data);
-    
+
     const slackResponse = await fetch(SLACK_WEBHOOK_URL, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
       },
       body: JSON.stringify(slackMessage),
     });
 
     if (!slackResponse.ok) {
-      console.error('Slack notification failed:', await slackResponse.text());
+      const errorText = await slackResponse.text();
+      logError("contact", new Error("Slack notification failed"), {
+        status: slackResponse.status,
+        response: errorText,
+      });
       // Slack通知が失敗してもユーザーにはエラーを返さない（ログのみ）
     }
 
-    return NextResponse.json({ 
-      success: true, 
-      message: data.formType === 'demo' 
-        ? 'デモ申し込みを受け付けました' 
-        : '資料ダウンロードを受け付けました'
+    const response = NextResponse.json({
+      success: true,
+      message:
+        data.formType === "demo"
+          ? "デモ申し込みを受け付けました"
+          : "資料ダウンロードを受け付けました",
     });
-
+    addRateLimitHeaders(response.headers, rateLimitResult);
+    return response;
   } catch (error) {
-    console.error('Contact form error:', error);
+    logError("contact", error);
     return NextResponse.json(
-      { message: '送信に失敗しました。しばらく経ってから再度お試しください。' },
-      { status: 500 }
+      createErrorResponse(ErrorMessages.SERVER.SERVICE_UNAVAILABLE),
+      { status: 500 },
     );
   }
 }

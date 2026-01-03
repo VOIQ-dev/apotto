@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { validateAndSanitizeUrl } from "@/lib/urlValidator";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -23,6 +24,29 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // SSRF対策: URLを検証
+  const validation = validateAndSanitizeUrl(url, {
+    requireHttps: false, // 開発環境も考慮
+    allowPrivateNetworks: false, // プライベートネットワークは禁止
+  });
+
+  if (!validation.valid) {
+    return new Response(
+      JSON.stringify({
+        success: false,
+        logs: [
+          "URL validation failed",
+          validation.error || "Invalid or blocked URL",
+        ],
+        note: `セキュリティポリシーによりこのURLは許可されていません: ${validation.error}`,
+      }),
+      { status: 400, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  // 検証済みのURLを使用
+  const validatedUrl = validation.url!;
+
   // ワーカーURLが設定されていない場合はエラー
   if (!WORKER_URL) {
     console.error("[auto-submit] AUTO_SUBMIT_WORKER_URL is not configured");
@@ -44,7 +68,7 @@ export async function POST(req: NextRequest) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        url,
+        url: validatedUrl, // 検証済みURLを使用
         company,
         person,
         name,

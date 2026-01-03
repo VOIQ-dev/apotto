@@ -1,4 +1,5 @@
-import { chromium, Browser, Page, Frame } from 'playwright';
+import { chromium, Browser, Page, Frame } from "playwright";
+import { validateAndSanitizeUrl } from "./urlValidator";
 
 type Payload = {
   url: string;
@@ -37,26 +38,35 @@ export async function autoSubmit(payload: Payload): Promise<Result> {
     page = await context.newPage();
 
     const startUrl = sanitizeUrl(payload.url);
+    if (!startUrl) {
+      log("Invalid or blocked URL");
+      return {
+        success: false,
+        logs,
+        note: "URLが無効、またはセキュリティポリシーにより禁止されています",
+      };
+    }
+
     log(`Navigating to: ${startUrl}`);
     await page.goto(startUrl, {
-      waitUntil: 'domcontentloaded',
+      waitUntil: "domcontentloaded",
       timeout: 30000,
     });
-    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForLoadState("networkidle").catch(() => {});
 
     // Try to find a contact page link and navigate if needed
     const contactUrl = await findContactPage(page, log);
     if (contactUrl && contactUrl !== page.url()) {
       log(`Navigating to contact page: ${contactUrl}`);
       await page.goto(contactUrl, {
-        waitUntil: 'domcontentloaded',
+        waitUntil: "domcontentloaded",
         timeout: 30000,
       });
       // If only hash changed, ensure section is in view
-      if (contactUrl.includes('#')) {
+      if (contactUrl.includes("#")) {
         const hash = new URL(contactUrl).hash;
         if (hash) {
-          const id = hash.replace('#', '');
+          const id = hash.replace("#", "");
           const anchor = page.locator(`#${id}`);
           if ((await anchor.count()) > 0) {
             await anchor.scrollIntoViewIfNeeded().catch(() => {});
@@ -68,18 +78,18 @@ export async function autoSubmit(payload: Payload): Promise<Result> {
     // Try to locate a form and fill (including iframes)
     const found = await findAndFillFormAnyContext(page, payload, log);
     if (!found) {
-      log('No suitable contact form found');
+      log("No suitable contact form found");
       return {
         success: false,
         logs,
         finalUrl: page.url(),
-        note: 'Form not found',
+        note: "Form not found",
       };
     }
 
     // Try submit
     const submitted = await submitFormAnyContext(page, log);
-    log(submitted ? 'Submitted form' : 'Failed to submit');
+    log(submitted ? "Submitted form" : "Failed to submit");
 
     // Best-effort wait and capture final URL
     await page.waitForTimeout(2000);
@@ -87,7 +97,7 @@ export async function autoSubmit(payload: Payload): Promise<Result> {
     return { success: submitted, logs, finalUrl };
   } catch (error: unknown) {
     const message =
-      error instanceof Error ? error.message : String(error ?? 'Unknown error');
+      error instanceof Error ? error.message : String(error ?? "Unknown error");
     log(`Error: ${message}`);
     return { success: false, logs, finalUrl: page?.url() };
   } finally {
@@ -95,14 +105,27 @@ export async function autoSubmit(payload: Payload): Promise<Result> {
   }
 }
 
-function sanitizeUrl(url: string): string {
-  if (!/^https?:\/\//i.test(url)) return `https://${url}`;
-  return url;
+/**
+ * URLをサニタイズして検証
+ * @param url 検証するURL
+ * @returns 検証済みのURL、または検証失敗時はnull
+ */
+function sanitizeUrl(url: string): string | null {
+  const validation = validateAndSanitizeUrl(url, {
+    requireHttps: false,
+    allowPrivateNetworks: false,
+  });
+
+  if (!validation.valid) {
+    return null;
+  }
+
+  return validation.url || null;
 }
 
 async function findContactPage(
   page: Page,
-  log: (s: string) => void
+  log: (s: string) => void,
 ): Promise<string | null> {
   // Heuristics: look for links containing contact words
   const selectors = [
@@ -122,7 +145,7 @@ async function findContactPage(
   for (const sel of selectors) {
     const link = await page.locator(sel).first();
     if (await link.count()) {
-      const href = await link.getAttribute('href');
+      const href = await link.getAttribute("href");
       if (href) {
         const resolved = new URL(href, page.url()).toString();
         log(`Found contact link via selector ${sel}: ${resolved}`);
@@ -132,12 +155,12 @@ async function findContactPage(
   }
   // Fallback: on-page anchors without explicit links
   const anchorCandidates = [
-    'contact',
-    'toiawase',
-    'inquiry',
-    'お問い合わせ',
-    '問い合わせ',
-    'support',
+    "contact",
+    "toiawase",
+    "inquiry",
+    "お問い合わせ",
+    "問い合わせ",
+    "support",
   ];
   for (const id of anchorCandidates) {
     const anchor = page.locator(`#${id}`).first();
@@ -150,25 +173,25 @@ async function findContactPage(
   }
   // Fallback: scan all anchors for likely keywords (href or text)
   const candidates = await page.evaluate(() => {
-    const as = Array.from(document.querySelectorAll('a'));
+    const as = Array.from(document.querySelectorAll("a"));
     return as
       .map((a) => ({
-        href: (a.getAttribute('href') || '').trim(),
-        text: (a.textContent || '').trim(),
+        href: (a.getAttribute("href") || "").trim(),
+        text: (a.textContent || "").trim(),
       }))
       .slice(0, 500);
   });
   const keywordParts = [
-    'contact',
-    'contact-us',
-    'contactus',
-    'inquiry',
-    'toiawase',
-    'support',
-    'help',
-    'feedback',
-    'お問い合わせ',
-    '問い合わせ',
+    "contact",
+    "contact-us",
+    "contactus",
+    "inquiry",
+    "toiawase",
+    "support",
+    "help",
+    "feedback",
+    "お問い合わせ",
+    "問い合わせ",
   ];
   for (const c of candidates) {
     const hay = `${c.href} ${c.text}`.toLowerCase();
@@ -185,16 +208,16 @@ async function findContactPage(
   const url = new URL(page.url());
   const base = `${url.protocol}//${url.host}`;
   const pathCandidates = [
-    '/contact',
-    '/contact/',
-    '/contact-us',
-    '/contactus',
-    '/inquiry',
-    '/inquiries',
-    '/support',
-    '/toiawase',
-    '/company/contact',
-    '/info/contact',
+    "/contact",
+    "/contact/",
+    "/contact-us",
+    "/contactus",
+    "/inquiry",
+    "/inquiries",
+    "/support",
+    "/toiawase",
+    "/company/contact",
+    "/info/contact",
   ];
   for (const path of pathCandidates) {
     const candidate = new URL(path, base).toString();
@@ -202,24 +225,24 @@ async function findContactPage(
     return candidate; // return first candidate; caller will attempt navigation
   }
 
-  log('No explicit contact link/anchor found; staying on current page');
+  log("No explicit contact link/anchor found; staying on current page");
   return null;
 }
 
 async function findAndFillForm(
   page: Page | Frame,
   payload: Payload,
-  log: (s: string) => void
+  log: (s: string) => void,
 ): Promise<boolean> {
   // Try a few likely form selectors
   const formLocators = [
     "form[action*='contact']",
     "form[action*='inquiry']",
     "form[action*='toiawase']",
-    'form:has(input), form:has(textarea)',
+    "form:has(input), form:has(textarea)",
   ];
 
-  let formFound = null as null | ReturnType<Page['locator']>;
+  let formFound = null as null | ReturnType<Page["locator"]>;
   for (const fs of formLocators) {
     const loc = page.locator(fs).first();
     if ((await loc.count()) > 0) {
@@ -230,10 +253,10 @@ async function findAndFillForm(
   }
   if (!formFound) {
     // fallback: take the first form
-    const anyForm = page.locator('form').first();
+    const anyForm = page.locator("form").first();
     if ((await anyForm.count()) > 0) {
       formFound = anyForm;
-      log('Fallback: using first form on the page');
+      log("Fallback: using first form on the page");
     }
   }
   if (!formFound) return false;
@@ -323,37 +346,37 @@ async function findAndFillForm(
     [
       {
         keywords: [
-          '会社名',
-          '御社名',
-          '企業名',
-          '貴社名',
-          'Company',
-          'Organization',
-          'Corporate',
+          "会社名",
+          "御社名",
+          "企業名",
+          "貴社名",
+          "Company",
+          "Organization",
+          "Corporate",
         ],
         value: payload.company,
       },
       {
         keywords: [
-          '担当者',
-          'ご担当者',
-          '担当者名',
-          'Person',
-          'Contact person',
-          'Your name',
+          "担当者",
+          "ご担当者",
+          "担当者名",
+          "Person",
+          "Contact person",
+          "Your name",
         ],
         value: payload.person || payload.name,
       },
-      { keywords: ['氏名', 'お名前', 'Name'], value: payload.name },
-      { keywords: ['メール', 'E-mail', 'Email'], value: payload.email },
-      { keywords: ['電話', 'Tel', 'Phone'], value: payload.phone },
-      { keywords: ['件名', 'Subject', '題名'], value: payload.subject },
+      { keywords: ["氏名", "お名前", "Name"], value: payload.name },
+      { keywords: ["メール", "E-mail", "Email"], value: payload.email },
+      { keywords: ["電話", "Tel", "Phone"], value: payload.phone },
+      { keywords: ["件名", "Subject", "題名"], value: payload.subject },
       {
-        keywords: ['本文', 'お問い合わせ内容', 'Message', '内容'],
+        keywords: ["本文", "お問い合わせ内容", "Message", "内容"],
         value: payload.message,
       },
     ],
-    log
+    log,
   );
 
   if (payload.message) {
@@ -361,12 +384,12 @@ async function findAndFillForm(
       "textarea[name*='message']",
       "textarea[id*='message']",
       "textarea[placeholder*='お問い合わせ']",
-      'textarea',
+      "textarea",
     ];
     const found = await locateFirst(page, formFound, messageSelectors);
     if (found) {
       await found.fill(payload.message);
-      log('Filled message textarea');
+      log("Filled message textarea");
     }
   }
 
@@ -375,7 +398,7 @@ async function findAndFillForm(
 
 async function submitForm(
   page: Page | Frame,
-  log: (s: string) => void
+  log: (s: string) => void,
 ): Promise<boolean> {
   // Try button selectors
   const buttonSelectors = [
@@ -393,7 +416,7 @@ async function submitForm(
       try {
         await Promise.all([
           page
-            .waitForNavigation({ waitUntil: 'load', timeout: 15000 })
+            .waitForNavigation({ waitUntil: "load", timeout: 15000 })
             .catch(() => {}),
           btn.click({ timeout: 3000 }).catch(() => {}),
         ]);
@@ -406,11 +429,11 @@ async function submitForm(
         if ((await finalBtn.count()) > 0) {
           await Promise.all([
             page
-              .waitForNavigation({ waitUntil: 'load', timeout: 15000 })
+              .waitForNavigation({ waitUntil: "load", timeout: 15000 })
               .catch(() => {}),
             finalBtn.click({ timeout: 3000 }).catch(() => {}),
           ]);
-          log('Clicked final submit');
+          log("Clicked final submit");
         }
         return true;
       } catch {
@@ -423,8 +446,8 @@ async function submitForm(
 
 async function locateFirst(
   page: Page | Frame,
-  scope: ReturnType<Page['locator']>,
-  selectors: string[]
+  scope: ReturnType<Page["locator"]>,
+  selectors: string[],
 ) {
   for (const sel of selectors) {
     const loc = scope.locator(sel).first();
@@ -436,7 +459,7 @@ async function locateFirst(
 async function findAndFillFormAnyContext(
   page: Page,
   payload: Payload,
-  log: (s: string) => void
+  log: (s: string) => void,
 ): Promise<boolean> {
   if (await findAndFillForm(page, payload, log)) return true;
   for (const frame of page.frames()) {
@@ -448,7 +471,7 @@ async function findAndFillFormAnyContext(
 
 async function submitFormAnyContext(
   page: Page,
-  log: (s: string) => void
+  log: (s: string) => void,
 ): Promise<boolean> {
   if (await submitForm(page, log)) return true;
   for (const frame of page.frames()) {
@@ -460,16 +483,16 @@ async function submitFormAnyContext(
 
 async function fillByLabel(
   page: Page | Frame,
-  scope: ReturnType<Page['locator']>,
+  scope: ReturnType<Page["locator"]>,
   rules: Array<{ keywords: string[]; value?: string }>,
-  log: (s: string) => void
+  log: (s: string) => void,
 ) {
   for (const rule of rules) {
     if (!rule.value) continue;
     for (const kw of rule.keywords) {
-      const label = scope.locator('label', { hasText: kw }).first();
+      const label = scope.locator("label", { hasText: kw }).first();
       if ((await label.count()) > 0) {
-        const forId = await label.getAttribute('for');
+        const forId = await label.getAttribute("for");
         if (forId) {
           const target = scope.locator(`#${CSS.escape(forId)}`);
           if ((await target.count()) > 0) {
@@ -478,7 +501,7 @@ async function fillByLabel(
             break;
           }
         } else {
-          const target = label.locator('input,textarea');
+          const target = label.locator("input,textarea");
           if ((await target.count()) > 0) {
             await target
               .first()

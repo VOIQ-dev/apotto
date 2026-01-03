@@ -5,6 +5,8 @@ import {
   applyAuthCookies,
 } from "@/lib/routeAuth";
 import { createSupabaseServiceClient } from "@/lib/supabaseServer";
+import { LeadImportSchema, formatZodErrors } from "@/lib/schemas";
+import { ErrorMessages, createErrorResponse, logError } from "@/lib/errors";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,7 +16,10 @@ export async function GET(request: NextRequest) {
   const { companyId, cookieMutations } =
     await getAccountContextFromRequest(request);
   if (!companyId) {
-    const res = NextResponse.json({ error: "認証が必要です" }, { status: 401 });
+    const res = NextResponse.json(
+      createErrorResponse(ErrorMessages.AUTH.UNAUTHORIZED),
+      { status: 401 },
+    );
     applyAuthCookies(res, cookieMutations);
     return res;
   }
@@ -42,9 +47,9 @@ export async function GET(request: NextRequest) {
     .range(offset, offset + limit - 1);
 
   if (error) {
-    console.error("[leads] fetch error", error);
+    logError("leads", error, { context: "fetch error" });
     const res = NextResponse.json(
-      { error: "リード取得に失敗しました" },
+      createErrorResponse(ErrorMessages.SERVER.DATABASE_ERROR),
       { status: 500 },
     );
     applyAuthCookies(res, cookieMutations);
@@ -115,33 +120,31 @@ export async function POST(request: NextRequest) {
   const { companyId, cookieMutations } =
     await getAccountContextFromRequest(request);
   if (!companyId) {
-    const res = NextResponse.json({ error: "認証が必要です" }, { status: 401 });
+    const res = NextResponse.json(
+      createErrorResponse(ErrorMessages.AUTH.UNAUTHORIZED),
+      { status: 401 },
+    );
     applyAuthCookies(res, cookieMutations);
     return res;
   }
 
   try {
-    const body = await request.json();
-    const { leads, fileName } = body as {
-      leads: Array<{
-        companyName: string;
-        homepageUrl: string;
-        contactName?: string;
-        department?: string;
-        title?: string;
-        email?: string;
-      }>;
-      fileName?: string;
-    };
+    const rawBody = await request.json();
 
-    if (!leads || !Array.isArray(leads) || leads.length === 0) {
+    // Zodバリデーション
+    const validation = LeadImportSchema.safeParse(rawBody);
+
+    if (!validation.success) {
+      const { message, fields } = formatZodErrors(validation.error);
       const res = NextResponse.json(
-        { error: "リードデータが必要です" },
+        { error: message, errors: fields },
         { status: 400 },
       );
       applyAuthCookies(res, cookieMutations);
       return res;
     }
+
+    const { leads, fileName } = validation.data;
 
     const supabase = createSupabaseServiceClient();
 
@@ -190,9 +193,9 @@ export async function POST(request: NextRequest) {
       .insert(insertData);
 
     if (insertError) {
-      console.error("[leads] import error", insertError);
+      logError("leads", insertError, { context: "import error" });
       const res = NextResponse.json(
-        { error: "インポートに失敗しました" },
+        createErrorResponse(ErrorMessages.RESOURCE.CREATION_FAILED),
         { status: 500 },
       );
       applyAuthCookies(res, cookieMutations);
@@ -208,9 +211,9 @@ export async function POST(request: NextRequest) {
     applyAuthCookies(res, cookieMutations);
     return res;
   } catch (err) {
-    console.error("[leads] import error", err);
+    logError("leads", err, { context: "import processing error" });
     const res = NextResponse.json(
-      { error: "インポート処理に失敗しました" },
+      createErrorResponse(ErrorMessages.SERVER.INTERNAL_ERROR),
       { status: 500 },
     );
     applyAuthCookies(res, cookieMutations);

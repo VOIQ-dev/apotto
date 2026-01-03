@@ -4,10 +4,14 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
+import { Tooltip } from "@mantine/core";
+import { UserProfileModal } from "./UserProfileModal";
 
 export function AppSidebar() {
   const [userName, setUserName] = useState<string>("");
   const [userEmail, setUserEmail] = useState<string>("");
+  const [companyName, setCompanyName] = useState<string>("");
+  const [isModalOpen, setIsModalOpen] = useState(false);
   const pathname = usePathname();
 
   const navItems = [
@@ -78,16 +82,65 @@ export function AppSidebar() {
         const res = await fetch("/api/account/me", { credentials: "include" });
         if (!res.ok) return;
         const data = (await res.json().catch(() => ({}))) as {
-          account?: { display_name?: string | null; email?: string | null };
+          account?: { name?: string | null; email?: string | null };
+          company?: { name?: string | null };
         };
-        setUserName((data.account?.display_name ?? "").trim());
+        setUserName((data.account?.name ?? "").trim());
         setUserEmail((data.account?.email ?? "").trim());
+        setCompanyName((data.company?.name ?? "").trim());
       } catch {
         // fail silently
       }
     };
     void fetchUser();
   }, []);
+
+  const handleUpdateEmail = async (newEmail: string) => {
+    const res = await fetch("/api/account/update-email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ email: newEmail }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || "メールアドレスの更新に失敗しました");
+    }
+
+    setUserEmail(newEmail);
+  };
+
+  const handleUpdatePassword = async (
+    currentPassword: string,
+    newPassword: string,
+  ) => {
+    const res = await fetch("/api/account/update-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || "パスワードの更新に失敗しました");
+    }
+  };
+
+  const handleLogout = async () => {
+    const res = await fetch("/api/auth/logout", {
+      method: "POST",
+      credentials: "include",
+    });
+
+    if (!res.ok) {
+      throw new Error("ログアウトに失敗しました");
+    }
+
+    // ログアウト成功後、ログインページへリダイレクト
+    window.location.href = "/login";
+  };
 
   return (
     <aside className="fixed left-0 top-0 z-40 h-screen w-64 border-r border-border/50 bg-background/95 backdrop-blur-xl transition-transform hidden md:block">
@@ -147,20 +200,55 @@ export function AppSidebar() {
       </div>
 
       <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-border/50 bg-muted/10">
-        <div className="flex items-center gap-3">
-          <div className="h-9 w-9 rounded-full bg-gradient-to-br from-slate-700 to-slate-900 flex items-center justify-center text-xs text-white font-bold border border-white/10 shadow-inner">
-            {(userName || userEmail || "U").slice(0, 2).toUpperCase()}
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-xs font-medium text-foreground truncate">
-              {userName || " "}
-            </p>
-            <p className="text-[10px] text-muted-foreground truncate">
-              {userEmail || " "}
-            </p>
-          </div>
-        </div>
+        <Tooltip
+          label="ユーザー情報を確認"
+          position="right"
+          withArrow
+          arrowSize={6}
+          offset={10}
+          openDelay={300}
+          transitionProps={{ transition: "fade", duration: 200 }}
+          styles={{
+            tooltip: {
+              backgroundColor: "var(--mantine-color-dark-6)",
+              color: "var(--mantine-color-white)",
+              fontSize: "0.75rem",
+              fontWeight: 500,
+              padding: "0.5rem 0.75rem",
+            },
+          }}
+        >
+          <button
+            onClick={() => setIsModalOpen(true)}
+            className="w-full flex items-center gap-3 hover:bg-muted/50 rounded-lg p-2 -m-2 transition-colors"
+          >
+            <div className="h-9 w-9 rounded-full bg-gradient-to-br from-slate-700 to-slate-900 flex items-center justify-center text-xs text-white font-bold border border-white/10 shadow-inner">
+              {(userName || userEmail || "U").slice(0, 2).toUpperCase()}
+            </div>
+            <div className="flex-1 min-w-0 text-left">
+              <p className="text-xs font-medium text-foreground truncate">
+                {userName || " "}
+              </p>
+              <p className="text-[10px] text-muted-foreground truncate">
+                {userEmail || " "}
+              </p>
+            </div>
+          </button>
+        </Tooltip>
       </div>
+
+      <UserProfileModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        userData={{
+          companyName,
+          email: userEmail,
+          name: userName,
+        }}
+        onUpdateEmail={handleUpdateEmail}
+        onUpdatePassword={handleUpdatePassword}
+        onLogout={handleLogout}
+      />
     </aside>
   );
 }
