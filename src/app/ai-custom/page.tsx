@@ -149,6 +149,13 @@ const REQUIRED_SENDER_FIELDS: Array<keyof SenderProfile> = [
   "firstNameKana",
   "email",
   "subject",
+  "department",
+  "title",
+  "phone",
+  "postalCode",
+  "prefecture",
+  "city",
+  "address",
 ];
 
 const PRODUCT_DETAIL_GROUPS = PRODUCT_CONTEXT_GROUPS;
@@ -172,7 +179,7 @@ const SENDER_FIELD_LABELS: Record<keyof SenderProfile, string> = {
   prefecture: "都道府県",
   city: "市区町村",
   address: "住所（番地以降）",
-  building: "建物名",
+  building: "建物名（任意）",
   subject: "件名",
   meetingUrl: "商談日程URL（任意）",
 };
@@ -1994,8 +2001,7 @@ export default function AiCustomPage() {
             />
             <div className="sm:col-span-2">
               <InputField
-                label="建物名"
-                required
+                label="建物名（任意）"
                 placeholder="例: 〇〇ビル 5F"
                 value={senderProfile.building}
                 onChange={(value) =>
@@ -2026,10 +2032,7 @@ export default function AiCustomPage() {
           </div>
           {senderMissingFields.length > 0 && (
             <div className="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">
-              必須項目が不足しています:{" "}
-              {senderMissingFields
-                .map((field) => SENDER_FIELD_LABELS[field])
-                .join("、")}
+              必須項目が不足しています
             </div>
           )}
         </section>
