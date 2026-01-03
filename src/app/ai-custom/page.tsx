@@ -1895,6 +1895,7 @@ export default function AiCustomPage() {
             />
             <InputField
               label="部署"
+              required
               value={senderProfile.department}
               onChange={(value) =>
                 handleSenderProfileChange("department", value)
@@ -1902,6 +1903,7 @@ export default function AiCustomPage() {
             />
             <InputField
               label="役職"
+              required
               value={senderProfile.title}
               onChange={(value) => handleSenderProfileChange("title", value)}
             />
@@ -1954,11 +1956,13 @@ export default function AiCustomPage() {
             />
             <InputField
               label="電話番号"
+              required
               value={senderProfile.phone}
               onChange={(value) => handleSenderProfileChange("phone", value)}
             />
             <InputField
               label="郵便番号"
+              required
               placeholder="例: 100-0001"
               value={senderProfile.postalCode}
               onChange={(value) =>
@@ -1967,6 +1971,7 @@ export default function AiCustomPage() {
             />
             <InputField
               label="都道府県"
+              required
               placeholder="例: 東京都"
               value={senderProfile.prefecture}
               onChange={(value) =>
@@ -1975,12 +1980,14 @@ export default function AiCustomPage() {
             />
             <InputField
               label="市区町村"
+              required
               placeholder="例: 千代田区"
               value={senderProfile.city}
               onChange={(value) => handleSenderProfileChange("city", value)}
             />
             <InputField
               label="住所（番地以降）"
+              required
               placeholder="例: 千代田1-1"
               value={senderProfile.address}
               onChange={(value) => handleSenderProfileChange("address", value)}
@@ -1988,6 +1995,7 @@ export default function AiCustomPage() {
             <div className="sm:col-span-2">
               <InputField
                 label="建物名"
+                required
                 placeholder="例: 〇〇ビル 5F"
                 value={senderProfile.building}
                 onChange={(value) =>
