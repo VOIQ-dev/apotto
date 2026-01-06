@@ -17,7 +17,7 @@ const scoreConfig: Record<
   }
 > = {
   high: {
-    label: "インテントスコア：高",
+    label: "アプローチ優先度：高",
     gradient: "from-emerald-400 to-emerald-400",
     glowColor: "shadow-emerald-500/30",
     iconBg: "bg-emerald-400",
@@ -34,7 +34,7 @@ const scoreConfig: Record<
     ],
   },
   medium: {
-    label: "インテントスコア：中",
+    label: "アプローチ優先度：中",
     gradient: "from-emerald-600 to-teal-600",
     glowColor: "shadow-emerald-600/20",
     iconBg: "bg-emerald-600",
@@ -52,7 +52,7 @@ const scoreConfig: Record<
     ],
   },
   low: {
-    label: "インテントスコア：低",
+    label: "アプローチ優先度：低",
     gradient: "from-emerald-900 to-slate-900",
     glowColor: "shadow-emerald-900/10",
     iconBg: "bg-emerald-900",

@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   getAccountContextFromRequest,
   applyAuthCookies,
+  createSessionInvalidResponse,
 } from "@/lib/routeAuth";
 import { createSupabaseServiceClient } from "@/lib/supabaseServer";
 import { LeadImportSchema, formatZodErrors } from "@/lib/schemas";
@@ -13,8 +14,14 @@ export const dynamic = "force-dynamic";
 
 // GET: リード一覧取得（ページネーション対応）
 export async function GET(request: NextRequest) {
-  const { companyId, cookieMutations } =
+  const { companyId, cookieMutations, sessionValid } =
     await getAccountContextFromRequest(request);
+
+  // セッション無効チェック（同時ログイン制限）
+  if (!sessionValid) {
+    return createSessionInvalidResponse(cookieMutations);
+  }
+
   if (!companyId) {
     const res = NextResponse.json(
       createErrorResponse(ErrorMessages.AUTH.UNAUTHORIZED),
@@ -56,7 +63,7 @@ export async function GET(request: NextRequest) {
     return res;
   }
 
-  // インテントスコア計算のため、関連するpdf_send_logsとpdf_open_eventsを取得
+  // アプローチ優先度計算のため、関連するpdf_send_logsとpdf_open_eventsを取得
   const leadsWithScore = await Promise.all(
     (leads || []).map(async (lead) => {
       let intentScore: number | null = null;
@@ -115,10 +122,93 @@ export async function GET(request: NextRequest) {
   return res;
 }
 
+// PATCH: 送信結果をhomepageUrlで更新
+export async function PATCH(request: NextRequest) {
+  const { companyId, cookieMutations, sessionValid } =
+    await getAccountContextFromRequest(request);
+
+  if (!sessionValid) {
+    return createSessionInvalidResponse(cookieMutations);
+  }
+
+  if (!companyId) {
+    const res = NextResponse.json(
+      createErrorResponse(ErrorMessages.AUTH.UNAUTHORIZED),
+      { status: 401 },
+    );
+    applyAuthCookies(res, cookieMutations);
+    return res;
+  }
+
+  try {
+    const body = await request.json();
+    const { homepageUrl, sendStatus } = body;
+
+    if (!homepageUrl || !sendStatus) {
+      const res = NextResponse.json(
+        { error: "homepageUrl and sendStatus are required" },
+        { status: 400 },
+      );
+      applyAuthCookies(res, cookieMutations);
+      return res;
+    }
+
+    const supabase = createSupabaseServiceClient();
+
+    const { data, error, count } = await supabase
+      .from("lead_lists")
+      .update({ send_status: sendStatus }, { count: "exact" })
+      .eq("company_id", companyId)
+      .eq("homepage_url", homepageUrl)
+      .select();
+
+    if (error) {
+      console.error("[PATCH /api/leads] DB error:", error);
+      logError("leads", error, { context: "update send_status" });
+      const res = NextResponse.json(
+        createErrorResponse(ErrorMessages.SERVER.DATABASE_ERROR),
+        { status: 500 },
+      );
+      applyAuthCookies(res, cookieMutations);
+      return res;
+    }
+
+    if (!count || count === 0) {
+      console.warn(`[PATCH /api/leads] No lead found for URL: ${homepageUrl}`);
+      const res = NextResponse.json(
+        { success: false, message: "Lead not found", homepageUrl },
+        { status: 404 },
+      );
+      applyAuthCookies(res, cookieMutations);
+      return res;
+    }
+
+    console.log(
+      `[PATCH /api/leads] Updated ${count} lead(s) for URL: ${homepageUrl} -> ${sendStatus}`,
+    );
+    const res = NextResponse.json({ success: true, updated: count });
+    applyAuthCookies(res, cookieMutations);
+    return res;
+  } catch (err) {
+    logError("leads", err, { context: "PATCH error" });
+    const res = NextResponse.json(
+      createErrorResponse(ErrorMessages.SERVER.INTERNAL_ERROR),
+      { status: 500 },
+    );
+    applyAuthCookies(res, cookieMutations);
+    return res;
+  }
+}
+
 // POST: CSVインポート（差分マージ）
 export async function POST(request: NextRequest) {
-  const { companyId, cookieMutations } =
+  const { companyId, cookieMutations, sessionValid } =
     await getAccountContextFromRequest(request);
+
+  if (!sessionValid) {
+    return createSessionInvalidResponse(cookieMutations);
+  }
+
   if (!companyId) {
     const res = NextResponse.json(
       createErrorResponse(ErrorMessages.AUTH.UNAUTHORIZED),

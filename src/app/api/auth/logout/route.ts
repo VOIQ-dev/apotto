@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextRequest, NextResponse } from "next/server";
+import { SESSION_COOKIE_NAME } from "@/lib/sessionConfig";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -63,6 +64,8 @@ export async function POST(request: NextRequest) {
     applyAuthCookies(res, cookieMutations);
     // legacy cookie も消す（残っていても良いが、混乱を避ける）
     res.cookies.set("apotto_auth", "", { path: "/", maxAge: 0 });
+    // セッションID cookie もクリア
+    res.cookies.set(SESSION_COOKIE_NAME, "", { path: "/", maxAge: 0 });
     return res;
   } catch (err) {
     console.error("[auth/logout] Unexpected error", err);

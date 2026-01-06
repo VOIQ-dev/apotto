@@ -3,6 +3,8 @@ import type { User } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 
 import { createSupabaseServiceClient } from "./supabaseServer";
+import { SESSION_COOKIE_NAME } from "./sessionConfig";
+import { ErrorMessages, createErrorResponse } from "./errors";
 
 export type CookieMutation = {
   name: string;
@@ -17,6 +19,7 @@ type AccountRow = {
   email: string;
   role: string;
   status: string;
+  current_session_id: string | null;
 };
 
 function getPublicSupabaseEnv() {
@@ -74,6 +77,7 @@ export async function getAccountContextFromRequest(
   account: AccountRow | null;
   companyId: string | null;
   role: "admin" | "member" | null;
+  sessionValid: boolean;
 }> {
   const { user, cookieMutations } = await getAuthUserFromRequest(request);
   const email = user?.email ?? null;
@@ -84,13 +88,14 @@ export async function getAccountContextFromRequest(
       account: null,
       companyId: null,
       role: null,
+      sessionValid: false,
     };
   }
 
   const supabase = createSupabaseServiceClient();
   const { data: account, error } = await supabase
     .from("accounts")
-    .select("id, company_id, email, role, status")
+    .select("id, company_id, email, role, status, current_session_id")
     .eq("email", email)
     .maybeSingle();
 
@@ -106,11 +111,44 @@ export async function getAccountContextFromRequest(
         : null;
   const companyId = account?.company_id ? String(account.company_id) : null;
 
+  // セッションID検証（同時ログイン制限）
+  const cookieSessionId = request.cookies.get(SESSION_COOKIE_NAME)?.value;
+  const dbSessionId = account?.current_session_id;
+  // DBにセッションIDがない場合（マイグレーション前）は検証をスキップ
+  const sessionValid = !dbSessionId || cookieSessionId === dbSessionId;
+
+  // デバッグログ
+  if (dbSessionId && cookieSessionId !== dbSessionId) {
+    console.log("[routeAuth] Session mismatch detected:", {
+      email,
+      cookieSessionId: cookieSessionId?.slice(0, 8) + "...",
+      dbSessionId: dbSessionId?.slice(0, 8) + "...",
+    });
+  }
+
   return {
     user,
     cookieMutations,
     account: (account as unknown as AccountRow) ?? null,
     companyId,
     role,
+    sessionValid,
   };
+}
+
+/**
+ * セッション無効時に401レスポンスを返す
+ */
+export function createSessionInvalidResponse(
+  cookieMutations: CookieMutation[],
+): NextResponse {
+  const res = NextResponse.json(
+    {
+      ...createErrorResponse(ErrorMessages.AUTH.SESSION_INVALID),
+      code: "SESSION_INVALID",
+    },
+    { status: 401 },
+  );
+  applyAuthCookies(res, cookieMutations);
+  return res;
 }

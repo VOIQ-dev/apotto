@@ -13,6 +13,7 @@ export const ErrorMessages = {
     INVALID_CREDENTIALS: "認証に失敗しました",
     UNAUTHORIZED: "認証が必要です",
     SESSION_EXPIRED: "セッションが期限切れです。再度ログインしてください",
+    SESSION_INVALID: "別の場所でログインされたため、このセッションは無効です",
     FORBIDDEN: "この操作を実行する権限がありません",
     EMAIL_NOT_CONFIRMED: "メールアドレスが未確認です",
     ACCOUNT_NOT_FOUND: "アカウントが見つかりません",

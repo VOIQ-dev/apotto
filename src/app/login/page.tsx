@@ -19,6 +19,11 @@ function LoginForm() {
     [searchParams],
   );
 
+  const sessionInvalid = useMemo(
+    () => searchParams.get("reason") === "session_invalid",
+    [searchParams],
+  );
+
   const revealPasswordFor = () => {
     setRevealPassword(true);
     window.setTimeout(() => setRevealPassword(false), 1500);
@@ -65,6 +70,12 @@ function LoginForm() {
         {changed && (
           <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
             パスワードを変更しました。新しいパスワードでログインしてください。
+          </div>
+        )}
+
+        {sessionInvalid && (
+          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+            別の場所でログインされたため、このセッションは無効になりました。
           </div>
         )}
 

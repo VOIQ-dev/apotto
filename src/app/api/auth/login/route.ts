@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "crypto";
 
 import { createSupabaseServiceClient } from "@/lib/supabaseServer";
 import { LoginSchema, formatZodErrors } from "@/lib/schemas";
@@ -9,6 +10,10 @@ import {
   addRateLimitHeaders,
 } from "@/lib/rateLimit";
 import { ErrorMessages, createErrorResponse, logError } from "@/lib/errors";
+import {
+  SESSION_COOKIE_NAME,
+  SESSION_COOKIE_OPTIONS,
+} from "@/lib/sessionConfig";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -139,6 +144,9 @@ export async function POST(request: NextRequest) {
       return res;
     }
 
+    // 新しいセッションIDを生成（同時ログイン制限のため）
+    const newSessionId = randomUUID();
+
     // ログイン可視化のために最終ログイン日時を更新（=制御ではなく観測）
     const nowIso = new Date().toISOString();
     const status = String(
@@ -150,6 +158,7 @@ export async function POST(request: NextRequest) {
     const patch: Record<string, unknown> = {
       last_login_at: nowIso,
       updated_at: nowIso,
+      current_session_id: newSessionId, // セッションID更新（既存セッションを無効化）
     };
     // 未ログイン状態(invited 等)はログイン済(active)へ更新
     if (status !== "active") patch.status = "active";
@@ -171,6 +180,8 @@ export async function POST(request: NextRequest) {
       },
     });
     applyAuthCookies(res, cookieMutations);
+    // セッションIDをCookieに保存
+    res.cookies.set(SESSION_COOKIE_NAME, newSessionId, SESSION_COOKIE_OPTIONS);
     addRateLimitHeaders(res.headers, rateLimitResult);
     return res;
   } catch (err) {

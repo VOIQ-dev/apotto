@@ -70,7 +70,6 @@ type DashboardData = {
   funnel: Array<{ stage: string; value: number; delta: number }>;
   intentScores: Array<{
     company: string;
-    contact?: string;
     email?: string;
     score: number;
     sentAt?: string;
@@ -224,6 +223,71 @@ export default function DashboardPage() {
     });
     return groups;
   }, [metrics.data.intentScores]);
+
+  // アプローチ優先度ごとのCSV出力
+  const handleExportIntentCsv = useCallback(
+    (categoryKey: IntentScoreCategory, categoryLabel: string) => {
+      const rows = intentGrouped[categoryKey];
+      if (rows.length === 0) return;
+
+      const isLow = categoryKey === "low";
+      const headers = isLow
+        ? ["企業名", "メール", "資料名", "送信日時"]
+        : [
+            "企業名",
+            "メール",
+            "資料名",
+            "スコア",
+            "送信日時",
+            "閲覧回数",
+            "読了率",
+            "最終閲覧",
+          ];
+
+      const csvRows = rows.map((row) => {
+        if (isLow) {
+          return [
+            row.company ?? "",
+            row.email ?? "",
+            row.pdf ?? "",
+            row.sentAt ?? "",
+          ];
+        }
+        return [
+          row.company ?? "",
+          row.email ?? "",
+          row.pdf ?? "",
+          String(row.hotScore ?? 0),
+          row.sentAt ?? "",
+          String(row.openCount ?? 0),
+          row.openRate != null ? `${row.openRate}%` : "",
+          row.lastViewedAt ?? "",
+        ];
+      });
+
+      const bom = "\uFEFF";
+      const escapeCell = (v: string) =>
+        v.includes(",") || v.includes('"') || v.includes("\n")
+          ? `"${v.replace(/"/g, '""')}"`
+          : v;
+      const csvContent =
+        bom +
+        [headers, ...csvRows]
+          .map((r) => r.map(escapeCell).join(","))
+          .join("\n");
+
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `approach_priority_${categoryKey}_${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    },
+    [intentGrouped],
+  );
 
   const tooltipFancy = useMemo(
     () => ({
@@ -834,7 +898,7 @@ export default function DashboardPage() {
           <div className="flex items-center justify-between mb-4">
             <div>
               <h2 className="text-lg font-bold text-foreground">
-                インテントスコア
+                アプローチ優先度
               </h2>
               <p className="text-sm text-muted-foreground">
                 送信から初回開封までの時間から算出した関心度。High(3日以内),
@@ -847,7 +911,7 @@ export default function DashboardPage() {
           </div>
           {metrics.data.intentScores.length === 0 ? (
             <div className="flex h-full items-center justify-center text-sm text-muted-foreground py-10">
-              インテントスコアのデータがまだありません。
+              アプローチ優先度のデータがまだありません。
             </div>
           ) : (
             <div className="grid gap-4">
@@ -884,22 +948,52 @@ export default function DashboardPage() {
                       className={`flex items-center justify-between px-4 py-3 text-sm font-semibold ${cat.color}`}
                     >
                       <span>{cat.label}</span>
-                      <span className="text-xs">{rows.length}件</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs">{rows.length}件</span>
+                        {rows.length > 0 && (
+                          <MantineTooltip
+                            label="CSVエクスポート"
+                            {...tooltipFancy}
+                          >
+                            <button
+                              onClick={() =>
+                                handleExportIntentCsv(cat.key, cat.label)
+                              }
+                              className="p-1 rounded hover:bg-white/20 transition-colors"
+                              aria-label={`${cat.label}をCSVでエクスポート`}
+                            >
+                              <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="14"
+                                height="14"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              >
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                <polyline points="7 10 12 15 17 10" />
+                                <line x1="12" y1="15" x2="12" y2="3" />
+                              </svg>
+                            </button>
+                          </MantineTooltip>
+                        )}
+                      </div>
                     </div>
                     {rows.length === 0 ? (
                       <div className="px-4 py-6 text-sm text-muted-foreground">
                         該当データはありません。
                       </div>
                     ) : cat.key === "low" ? (
-                      /* Lowカテゴリ: 簡略表示（企業、メール/担当、資料、送信日時のみ） */
+                      /* Lowカテゴリ: 簡略表示（企業、メール、資料、送信日時のみ） */
                       <div className="overflow-x-auto">
                         <table className="w-full text-left text-sm">
                           <thead className="bg-muted/40 text-xs uppercase text-muted-foreground">
                             <tr>
                               <th className="px-4 py-3 font-medium">企業</th>
-                              <th className="px-4 py-3 font-medium">
-                                メール / 担当
-                              </th>
+                              <th className="px-4 py-3 font-medium">メール</th>
                               <th className="px-4 py-3 font-medium">資料</th>
                               <th className="px-4 py-3 font-medium text-right">
                                 送信日時
@@ -929,15 +1023,6 @@ export default function DashboardPage() {
                                   >
                                     <div className="text-xs font-semibold text-foreground truncate max-w-[200px] cursor-help">
                                       {row.email || "-"}
-                                    </div>
-                                  </MantineTooltip>
-                                  <MantineTooltip
-                                    label={row.contact || ""}
-                                    disabled={!row.contact}
-                                    {...tooltipFancy}
-                                  >
-                                    <div className="text-xs truncate max-w-[200px] cursor-help">
-                                      {row.contact || ""}
                                     </div>
                                   </MantineTooltip>
                                 </td>
@@ -975,18 +1060,16 @@ export default function DashboardPage() {
                           <thead className="bg-muted/40 text-xs uppercase text-muted-foreground">
                             <tr>
                               <th className="px-4 py-3 font-medium">企業</th>
-                              <th className="px-4 py-3 font-medium">
-                                メール / 担当
-                              </th>
+                              <th className="px-4 py-3 font-medium">メール</th>
                               <th className="px-4 py-3 font-medium">資料</th>
                               <th className="px-4 py-3 font-medium text-right">
                                 送信日時
                               </th>
                               <th className="px-4 py-3 font-medium text-right">
-                                読了率
+                                閲覧回数
                               </th>
                               <th className="px-4 py-3 font-medium text-right">
-                                閲覧回数
+                                読了率
                               </th>
                               <th className="px-4 py-3 font-medium text-right">
                                 スコア
@@ -1021,15 +1104,6 @@ export default function DashboardPage() {
                                       {row.email || "-"}
                                     </div>
                                   </MantineTooltip>
-                                  <MantineTooltip
-                                    label={row.contact || ""}
-                                    disabled={!row.contact}
-                                    {...tooltipFancy}
-                                  >
-                                    <div className="text-xs truncate max-w-[200px] cursor-help">
-                                      {row.contact || ""}
-                                    </div>
-                                  </MantineTooltip>
                                 </td>
                                 <td className="px-4 py-3 text-foreground truncate max-w-[160px]">
                                   <MantineTooltip
@@ -1054,13 +1128,13 @@ export default function DashboardPage() {
                                   </MantineTooltip>
                                 </td>
                                 <td className="px-4 py-3 text-right font-medium text-foreground tabular-nums">
-                                  {row.openRate !== undefined
-                                    ? `${row.openRate}%`
+                                  {row.openCount !== undefined
+                                    ? `${row.openCount}回`
                                     : "-"}
                                 </td>
                                 <td className="px-4 py-3 text-right font-medium text-foreground tabular-nums">
-                                  {row.openCount !== undefined
-                                    ? `${row.openCount}回`
+                                  {row.openRate !== undefined
+                                    ? `${row.openRate}%`
                                     : "-"}
                                 </td>
                                 <td className="px-4 py-3 text-right font-semibold text-foreground tabular-nums">

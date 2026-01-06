@@ -137,6 +137,19 @@ export async function POST(request: NextRequest, context: RouteContext) {
         Date.now() - new Date(lastSeen).getTime() > THIRTY_MINUTES_MS;
     }
 
+    // 初回開封の場合、pdf_send_logs.first_opened_atを更新
+    if (!existing) {
+      const { error: updateError } = await supabase
+        .from("pdf_send_logs")
+        .update({ first_opened_at: nowIso })
+        .eq("id", sendLog.id)
+        .is("first_opened_at", null);
+
+      if (updateError) {
+        console.error("[pdf/open] first_opened_at update failed", updateError);
+      }
+    }
+
     // 新規セッションなら閲覧回数をインクリメント
     if (isNewSession) {
       const { error: rpcError } = await supabase.rpc("increment_open_count", {

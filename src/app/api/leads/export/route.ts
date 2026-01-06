@@ -38,7 +38,7 @@ export async function GET(request: NextRequest) {
     return res;
   }
 
-  // インテントスコア計算
+  // アプローチ優先度計算
   const leadsWithScore = await Promise.all(
     (leads || []).map(async (lead) => {
       let intentScore = "-";
@@ -86,7 +86,7 @@ export async function GET(request: NextRequest) {
     "企業名",
     "URL",
     "送信結果",
-    "インテントスコア",
+    "アプローチ優先度",
     "アポ獲得",
     "NG企業",
     "担当者名",

@@ -410,3 +410,13 @@ body {
   text-shadow: 0 8px 30px rgba(15, 118, 110, 0.45);
   display: inline-block;
 }
+
+/* AG Grid - セル境界線スタイル */
+.ag-theme-quartz,
+.ag-theme-quartz-dark {
+  --ag-cell-horizontal-border: solid 1px var(--ag-border-color);
+  --ag-header-column-separator-display: block;
+  --ag-header-column-separator-height: 100%;
+  --ag-header-column-separator-width: 1px;
+  --ag-header-column-separator-color: var(--ag-border-color);
+}

@@ -11,7 +11,7 @@ import {
 } from "react";
 import { flushSync } from "react-dom";
 import { read, utils } from "xlsx";
-import { AgGridReact } from "ag-grid-react";
+import { AgGridReact, useGridFilter } from "ag-grid-react";
 import { Download, RefreshCw, Trash2 } from "lucide-react";
 import { Tooltip, Modal, Button } from "@mantine/core";
 import type {
@@ -20,7 +20,7 @@ import type {
   GridReadyEvent,
   SelectionChangedEvent,
   CellValueChangedEvent,
-  RowDragEndEvent,
+  IDoesFilterPassParams,
 } from "ag-grid-community";
 import {
   AllCommunityModule,
@@ -184,6 +184,168 @@ const SENDER_FIELD_LABELS: Record<keyof SenderProfile, string> = {
   meetingUrl: "商談日程URL（任意）",
 };
 
+// カスタムテキストフィルターコンポーネント
+type TextFilterModel = { filterText: string } | null;
+
+const CustomTextFilter = ({
+  model,
+  onModelChange,
+  colDef,
+}: {
+  model: TextFilterModel;
+  onModelChange: (model: TextFilterModel) => void;
+  colDef: { field?: string };
+}) => {
+  const [filterText, setFilterText] = useState(model?.filterText ?? "");
+
+  const doesFilterPass = useCallback(
+    (params: IDoesFilterPassParams) => {
+      const { data } = params;
+      const field = colDef.field;
+      if (!field || !data || !model?.filterText) return true;
+
+      const value = String(data[field] ?? "").toLowerCase();
+      const search = model.filterText.toLowerCase();
+      return value.includes(search);
+    },
+    [colDef.field, model?.filterText],
+  );
+
+  useGridFilter({ doesFilterPass });
+
+  const handleApply = () => {
+    onModelChange(filterText ? { filterText } : null);
+  };
+
+  const handleClear = () => {
+    setFilterText("");
+    onModelChange(null);
+  };
+
+  return (
+    <div className="p-2 space-y-2 bg-background">
+      <input
+        type="text"
+        className="input-clean w-full text-sm"
+        placeholder="検索..."
+        value={filterText}
+        onChange={(e) => setFilterText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") handleApply();
+        }}
+      />
+      <div className="flex gap-1.5">
+        <button
+          onClick={handleClear}
+          className="btn-secondary text-[11px] py-1 px-3 whitespace-nowrap"
+        >
+          キャンセル
+        </button>
+        <button
+          onClick={handleApply}
+          className="btn-primary text-[11px] py-1 px-3 whitespace-nowrap"
+        >
+          フィルター
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// カスタムセットフィルターコンポーネント（送信結果用）
+type SetFilterModel = { values: string[] } | null;
+
+const CustomSetFilter = ({
+  model,
+  onModelChange,
+  colDef,
+}: {
+  model: SetFilterModel;
+  onModelChange: (model: SetFilterModel) => void;
+  colDef: { field?: string };
+}) => {
+  const [selectedValues, setSelectedValues] = useState<Set<string>>(
+    new Set(model?.values ?? []),
+  );
+
+  const options = [
+    { value: "success", label: "成功" },
+    { value: "failed", label: "失敗" },
+    { value: "blocked", label: "送信不可" },
+    { value: "", label: "-" },
+  ];
+
+  const doesFilterPass = useCallback(
+    (params: IDoesFilterPassParams) => {
+      if (!model?.values || model.values.length === 0) return true;
+      const { data } = params;
+      const field = colDef.field;
+      if (!field || !data) return true;
+
+      const value = String(data[field] ?? "");
+      return model.values.includes(value);
+    },
+    [colDef.field, model?.values],
+  );
+
+  useGridFilter({ doesFilterPass });
+
+  const handleToggle = (value: string) => {
+    const newSet = new Set(selectedValues);
+    if (newSet.has(value)) {
+      newSet.delete(value);
+    } else {
+      newSet.add(value);
+    }
+    setSelectedValues(newSet);
+  };
+
+  const handleApply = () => {
+    const values = Array.from(selectedValues);
+    onModelChange(values.length > 0 ? { values } : null);
+  };
+
+  const handleClear = () => {
+    setSelectedValues(new Set());
+    onModelChange(null);
+  };
+
+  return (
+    <div className="p-2 space-y-2 bg-background">
+      <div className="space-y-1.5">
+        {options.map((opt) => (
+          <label
+            key={opt.value}
+            className="flex items-center gap-2 cursor-pointer"
+          >
+            <input
+              type="checkbox"
+              checked={selectedValues.has(opt.value)}
+              onChange={() => handleToggle(opt.value)}
+              className="rounded border-border w-3.5 h-3.5"
+            />
+            <span className="text-xs">{opt.label}</span>
+          </label>
+        ))}
+      </div>
+      <div className="flex gap-1.5">
+        <button
+          onClick={handleClear}
+          className="btn-secondary text-[11px] py-1 px-3 whitespace-nowrap"
+        >
+          キャンセル
+        </button>
+        <button
+          onClick={handleApply}
+          className="btn-primary text-[11px] py-1 px-3 whitespace-nowrap"
+        >
+          フィルター
+        </button>
+      </div>
+    </div>
+  );
+};
+
 export default function AiCustomPage() {
   const [senderProfile, setSenderProfile] = useState<SenderProfile>(
     createDefaultSenderProfile,
@@ -262,7 +424,7 @@ export default function AiCustomPage() {
     return isDarkMode ? agGridThemeDark : agGridThemeLight;
   }, [isDarkMode]);
 
-  // AgGrid リード管理
+  // リード表管理
   const [leads, setLeads] = useState<LeadRow[]>([]);
   const [leadsLoading, setLeadsLoading] = useState(false);
   const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(
@@ -288,6 +450,22 @@ export default function AiCustomPage() {
         (field) => senderProfile[field].trim().length === 0,
       ),
     [senderProfile],
+  );
+
+  // 商品理解とターゲット情報の必須フィールドチェック
+  const productMissingFields = useMemo(() => {
+    const allProductFields = PRODUCT_DETAIL_GROUPS.flatMap((group) =>
+      group.fields.map((f) => f.key),
+    );
+    return allProductFields.filter(
+      (key) => !productContext[key] || productContext[key].trim().length === 0,
+    );
+  }, [productContext]);
+
+  // 入力必須項目が全て入力されているか
+  const isAllRequiredFieldsFilled = useMemo(
+    () => senderMissingFields.length === 0 && productMissingFields.length === 0,
+    [senderMissingFields, productMissingFields],
   );
 
   // 初期ロード: ローカルストレージから入力値を復元
@@ -458,17 +636,9 @@ export default function AiCustomPage() {
     return { total: sendResults.length, success, failed };
   }, [sendResults]);
 
-  // AgGrid 列定義
+  // リード表 列定義
   const leadColumnDefs = useMemo<ColDef<LeadRow>[]>(
     () => [
-      {
-        width: 50,
-        minWidth: 50,
-        pinned: "left",
-        lockPosition: true,
-        suppressMovable: true,
-        filter: false,
-      },
       {
         field: "importFileName",
         headerName: "インポートファイル",
@@ -481,7 +651,6 @@ export default function AiCustomPage() {
         editable: true,
         minWidth: 150,
         flex: 1,
-        rowDrag: true,
       },
       {
         field: "homepageUrl",
@@ -495,6 +664,7 @@ export default function AiCustomPage() {
         headerName: "送信結果",
         editable: false,
         minWidth: 100,
+        filter: CustomSetFilter,
         cellRenderer: (params: { value: string }) => {
           if (params.value === "success") return "成功";
           if (params.value === "failed") return "失敗";
@@ -504,7 +674,7 @@ export default function AiCustomPage() {
       },
       {
         field: "intentScore",
-        headerName: "インテント",
+        headerName: "優先度",
         editable: false,
         minWidth: 100,
         cellRenderer: (params: { value: number | null }) => {
@@ -562,7 +732,7 @@ export default function AiCustomPage() {
   const defaultColDef = useMemo<ColDef>(
     () => ({
       sortable: true,
-      filter: true,
+      filter: CustomTextFilter,
       resizable: true,
     }),
     [],
@@ -613,12 +783,7 @@ export default function AiCustomPage() {
     [fetchLeads, leadsPage, showToast],
   );
 
-  const onRowDragEnd = useCallback((event: RowDragEndEvent) => {
-    // 行順序はDBに保存しないため、フロントエンドのみで反映
-    console.debug("[rowDragEnd]", event);
-  }, []);
-
-  // リードCSVエクスポート（AgGrid公式API使用 - 全データ出力）
+  // リードCSVエクスポート（全データ出力）
   const handleExportLeadsCsv = useCallback(() => {
     if (!gridApiRef.current) {
       console.warn("Grid API is not ready");
@@ -1164,13 +1329,56 @@ export default function AiCustomPage() {
                       }),
                     });
                   }
-                  // リードの送信結果をDBに更新
-                  if (item.card.leadId) {
-                    await fetch(`/api/leads/${item.card.leadId}`, {
-                      method: "PATCH",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ sendStatus: "success" }),
-                    });
+                  // リードの送信結果をDBに更新（leadIdまたはhomepageUrlで検索）
+                  try {
+                    if (item.card.leadId) {
+                      // leadIdがあれば直接更新
+                      const updateRes = await fetch(
+                        `/api/leads/${item.card.leadId}`,
+                        {
+                          method: "PATCH",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ sendStatus: "success" }),
+                        },
+                      );
+                      if (!updateRes.ok) {
+                        const errText = await updateRes.text();
+                        pushLog(`⚠️ DB更新失敗（${label}）: ${errText}`);
+                        console.error("Failed to update lead status:", errText);
+                      }
+                    } else {
+                      // leadIdがない場合はhomepageUrlで検索
+                      const normalizedUrl = normalizeHomepageUrl(
+                        item.card.homepageUrl,
+                      );
+                      console.log(
+                        `[DB更新] 成功: ${label}, 元URL: ${item.card.homepageUrl}, 正規化URL: ${normalizedUrl}`,
+                      );
+                      const updateRes = await fetch(`/api/leads`, {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          homepageUrl: normalizedUrl,
+                          sendStatus: "success",
+                        }),
+                      });
+                      if (!updateRes.ok) {
+                        const errText = await updateRes.text();
+                        if (updateRes.status === 404) {
+                          pushLog(
+                            `⚠️ DBにリードが見つかりません（${label}）正規化URL: ${normalizedUrl}`,
+                          );
+                        } else {
+                          pushLog(`⚠️ DB更新失敗（${label}）: ${errText}`);
+                        }
+                        console.error("Failed to update lead status:", errText);
+                      } else {
+                        console.log(`[DB更新] 成功確認: ${label}`);
+                      }
+                    }
+                  } catch (updateErr) {
+                    pushLog(`⚠️ DB更新エラー（${label}）: ${updateErr}`);
+                    console.error("Update error:", updateErr);
                   }
                 } else {
                   failedCount++;
@@ -1182,13 +1390,58 @@ export default function AiCustomPage() {
                       ? `送信不可（CAPTCHA）: ${label}`
                       : `送信失敗: ${label}`,
                   );
-                  // リードの送信結果をDBに更新
-                  if (item.card.leadId) {
-                    await fetch(`/api/leads/${item.card.leadId}`, {
-                      method: "PATCH",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ sendStatus: newStatus }),
-                    });
+                  // リードの送信結果をDBに更新（leadIdまたはhomepageUrlで検索）
+                  try {
+                    if (item.card.leadId) {
+                      // leadIdがあれば直接更新
+                      const updateRes = await fetch(
+                        `/api/leads/${item.card.leadId}`,
+                        {
+                          method: "PATCH",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ sendStatus: newStatus }),
+                        },
+                      );
+                      if (!updateRes.ok) {
+                        const errText = await updateRes.text();
+                        pushLog(`⚠️ DB更新失敗（${label}）: ${errText}`);
+                        console.error("Failed to update lead status:", errText);
+                      }
+                    } else {
+                      // leadIdがない場合はhomepageUrlで検索
+                      const normalizedUrl = normalizeHomepageUrl(
+                        item.card.homepageUrl,
+                      );
+                      console.log(
+                        `[DB更新] 失敗: ${label}, 元URL: ${item.card.homepageUrl}, 正規化URL: ${normalizedUrl}, status: ${newStatus}`,
+                      );
+                      const updateRes = await fetch(`/api/leads`, {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          homepageUrl: normalizedUrl,
+                          sendStatus: newStatus,
+                        }),
+                      });
+                      if (!updateRes.ok) {
+                        const errText = await updateRes.text();
+                        if (updateRes.status === 404) {
+                          pushLog(
+                            `⚠️ DBにリードが見つかりません（${label}）正規化URL: ${normalizedUrl}`,
+                          );
+                        } else {
+                          pushLog(`⚠️ DB更新失敗（${label}）: ${errText}`);
+                        }
+                        console.error("Failed to update lead status:", errText);
+                      } else {
+                        console.log(
+                          `[DB更新] 成功確認: ${label}, status: ${newStatus}`,
+                        );
+                      }
+                    }
+                  } catch (updateErr) {
+                    pushLog(`⚠️ DB更新エラー（${label}）: ${updateErr}`);
+                    console.error("Update error:", updateErr);
                   }
                 }
                 setSendResults((prev) => [
@@ -1257,10 +1510,12 @@ export default function AiCustomPage() {
       try {
         await handleBatchSend(targets, origin);
         setLastSendFinishedAt(new Date().toISOString());
-        // 送信結果を反映するためAgGridを再読み込み
+        // 送信結果を反映するためリード表を再読み込み
+        pushLog("📋 送信結果をリード表に反映中...");
         await fetchLeads(leadsPage);
-      } catch {
-        pushLog("送信処理でエラーが発生しました。");
+        pushLog("✅ リード表更新完了");
+      } catch (err) {
+        pushLog(`送信処理でエラーが発生しました: ${err}`);
       } finally {
         setIsSending(false);
       }
@@ -1455,8 +1710,10 @@ export default function AiCustomPage() {
           pendingIds: [],
           running: false,
         }));
-        // 送信結果を反映するためAgGridを再読み込み
+        // 送信結果を反映するためリード表を再読み込み
+        pushLog("📋 送信結果をリード表に反映中...");
         await fetchLeads(leadsPage);
+        pushLog("✅ リード表更新完了");
       } catch (error) {
         setAutoRunStatus("error");
         setAutoRunMessage("自動送信でエラーが発生しました。");
@@ -1794,47 +2051,6 @@ export default function AiCustomPage() {
     document.body.removeChild(link);
   }, []);
 
-  const downloadSendResultsCsv = useCallback(
-    (kind: "success" | "failed" | "all") => {
-      const rows =
-        kind === "all"
-          ? sendResults
-          : sendResults.filter((r) => r.status === kind);
-      if (rows.length === 0) return;
-
-      const escape = (value: string) =>
-        `"${String(value ?? "").replaceAll('"', '""')}"`;
-      const header = ["結果", "会社名", "URL", "メール", "送信日時"];
-      const lines = rows.map((r) =>
-        [
-          r.status === "success" ? "成功" : "失敗",
-          r.companyName,
-          r.homepageUrl,
-          r.email,
-          new Date(r.sentAtIso).toLocaleString("ja-JP"),
-        ]
-          .map(escape)
-          .join(","),
-      );
-
-      const bom = "\uFEFF";
-      const csv = `${bom}${header.join(",")}\n${lines.join("\n")}\n`;
-      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      const ts = new Date().toISOString().replaceAll(":", "-");
-      const kindLabel =
-        kind === "success" ? "成功" : kind === "failed" ? "失敗" : "全件";
-      a.download = `送信結果_${kindLabel}_${ts}.csv`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    },
-    [sendResults],
-  );
-
   return (
     <div className="min-h-screen bg-background text-foreground pb-20 md:pl-64">
       <AppSidebar />
@@ -2111,12 +2327,18 @@ export default function AiCustomPage() {
                       }
                       placeholder={field.helper}
                       rows={4}
+                      required
                     />
                   ))}
                 </div>
               </div>
             ))}
           </div>
+          {productMissingFields.length > 0 && (
+            <div className="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">
+              必須項目が不足しています
+            </div>
+          )}
         </section>
 
         <section className="card-clean p-8">
@@ -2390,7 +2612,6 @@ export default function AiCustomPage() {
               onGridReady={onGridReady}
               onSelectionChanged={onSelectionChanged}
               onCellValueChanged={onCellValueChanged}
-              onRowDragEnd={onRowDragEnd}
               getRowId={(params) => params.data.id}
               overlayNoRowsTemplate="リードがありません。CSVをインポートしてください。"
             />
@@ -2441,13 +2662,30 @@ export default function AiCustomPage() {
                 disabled={
                   selectedLeadIds.size === 0 ||
                   queueState.running ||
-                  autoRunStatus === "running"
+                  autoRunStatus === "running" ||
+                  !isAllRequiredFieldsFilled
                 }
                 className="btn-secondary min-w-[180px]"
+                title={
+                  !isAllRequiredFieldsFilled
+                    ? "必須項目を全て入力してください"
+                    : undefined
+                }
               >
                 {queueState.running || autoRunStatus === "running"
                   ? "生成中..."
                   : `AI文言を生成（${selectedLeadIds.size}件）`}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => void handleSimulateSend()}
+                disabled={isSending || sendableReadyCards.length === 0}
+                className="btn-secondary min-w-[180px]"
+              >
+                {isSending
+                  ? "送信中..."
+                  : `選択中のカードを送信（${sendableReadyCards.length}件）`}
               </button>
 
               <button
@@ -2457,9 +2695,15 @@ export default function AiCustomPage() {
                   selectedLeadIds.size === 0 ||
                   isSending ||
                   autoRunStatus === "running" ||
-                  queueState.running
+                  queueState.running ||
+                  !isAllRequiredFieldsFilled
                 }
                 className="btn-primary min-w-[180px]"
+                title={
+                  !isAllRequiredFieldsFilled
+                    ? "必須項目を全て入力してください"
+                    : undefined
+                }
               >
                 {isSending || autoRunStatus === "running"
                   ? "処理中..."
@@ -2548,31 +2792,6 @@ export default function AiCustomPage() {
                     <span className="font-semibold text-rose-400">
                       失敗 {sendSummary.failed}
                     </span>
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      className="btn-secondary text-xs"
-                      onClick={() => downloadSendResultsCsv("success")}
-                      disabled={sendSummary.success === 0}
-                    >
-                      成功CSV
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-secondary text-xs"
-                      onClick={() => downloadSendResultsCsv("failed")}
-                      disabled={sendSummary.failed === 0}
-                    >
-                      失敗CSV
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-secondary text-xs"
-                      onClick={() => downloadSendResultsCsv("all")}
-                    >
-                      全件CSV
-                    </button>
                   </div>
                 </div>
               )}
@@ -2970,6 +3189,7 @@ function TextareaField({
   className,
   helper,
   rows = 3,
+  required = false,
 }: {
   label: string;
   value: string;
@@ -2978,11 +3198,13 @@ function TextareaField({
   className?: string;
   helper?: string;
   rows?: number;
+  required?: boolean;
 }) {
   return (
     <label className={`flex flex-col gap-1.5 ${className ?? ""}`}>
       <span className="text-xs font-semibold text-muted-foreground">
         {label}
+        {required && <span className="text-rose-500 ml-0.5">*</span>}
       </span>
       {helper && (
         <span className="text-xs text-muted-foreground opacity-80">

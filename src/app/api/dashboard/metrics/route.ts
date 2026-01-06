@@ -5,6 +5,7 @@ import { clampInt, formatTokyoDay } from "@/lib/pdfTracking";
 import {
   applyAuthCookies,
   getAccountContextFromRequest,
+  createSessionInvalidResponse,
 } from "@/lib/routeAuth";
 
 export const runtime = "nodejs";
@@ -47,7 +48,6 @@ type DashboardResponse = {
   funnel: Array<{ stage: string; value: number; delta: number }>;
   intentScores: Array<{
     company: string;
-    contact?: string;
     email?: string;
     score: number;
     sentAt?: string;
@@ -153,13 +153,18 @@ function slot2h(hour: number): string {
 
 export async function GET(request: NextRequest) {
   try {
-    const { user, companyId, cookieMutations } =
+    const { user, companyId, cookieMutations, sessionValid } =
       await getAccountContextFromRequest(request);
     const json = (body: unknown, init?: { status?: number }) => {
       const res = NextResponse.json(body, { status: init?.status });
       applyAuthCookies(res, cookieMutations);
       return res;
     };
+
+    // セッション無効チェック（同時ログイン制限）
+    if (!sessionValid) {
+      return createSessionInvalidResponse(cookieMutations);
+    }
 
     if (!user) return json({ error: "認証が必要です" }, { status: 401 });
     if (!companyId)
@@ -254,61 +259,85 @@ export async function GET(request: NextRequest) {
       return json({ error: "PDFが見つかりません" }, { status: 404 });
     }
 
-    // Daily metrics (sent/opened) for open-rate
+    // 開封率計算: 送信成功数（分母）と閲覧数（分子）
     let sentTotal = 0;
     let openedTotal = 0;
-    if (companyName) {
-      // 会社フィルタ時は日次集計に company 情報がないため、送信ログから算出する
-      const baseQ = () => {
-        let q = supabase
-          .from("pdf_send_logs")
-          .select("id", { count: "exact", head: true })
-          .eq("company_id", companyId)
-          .eq("recipient_company_name", companyName)
-          .gte("sent_at", startIso)
-          .not("recipient_homepage_url", "is", null)
-          .neq("recipient_homepage_url", "");
-        if (pdfId) q = q.eq("pdf_id", pdfId);
-        return q;
-      };
+    {
+      // 送信数（is_revoked=falseのもの）
+      let sentQ = supabase
+        .from("pdf_send_logs")
+        .select("id", { count: "exact", head: true })
+        .eq("company_id", companyId)
+        .eq("is_revoked", false)
+        .gte("sent_at", startIso);
 
-      const { count: sentCount, error: sentErr } = await baseQ();
+      if (pdfId) {
+        sentQ = sentQ.eq("pdf_id", pdfId);
+      }
+      if (companyName) {
+        sentQ = sentQ.eq("recipient_company_name", companyName);
+      }
+
+      const { count: sentCount, error: sentErr } = await sentQ;
       if (sentErr) {
         console.error("[dashboard/metrics] sent count error", sentErr);
       } else {
         sentTotal = Number(sentCount ?? 0);
       }
 
-      const { count: openedCount, error: openedErr } = await baseQ().not(
-        "first_opened_at",
-        "is",
-        null,
-      );
-      if (openedErr) {
-        console.error("[dashboard/metrics] opened count error", openedErr);
+      // 閲覧数: pdf_open_eventsから実際に開封されたpdf_send_log_idのユニーク数をカウント
+      if (companyName) {
+        // companyNameフィルタがある場合: pdf_send_logsとJOIN
+        let openedQ = supabase
+          .from("pdf_open_events")
+          .select(
+            "pdf_send_log_id, pdf_send_logs!inner(recipient_company_name)",
+          )
+          .eq("company_id", companyId)
+          .gte("opened_at", startIso)
+          .eq("pdf_send_logs.recipient_company_name", companyName);
+
+        if (pdfId) {
+          openedQ = openedQ.eq("pdf_id", pdfId);
+        }
+
+        const { data: openedData, error: openedErr } = await openedQ;
+        if (openedErr) {
+          console.error("[dashboard/metrics] opened count error", openedErr);
+        } else {
+          const uniqueSendLogIds = new Set(
+            (openedData ?? [])
+              .map((row: { pdf_send_log_id?: unknown }) =>
+                String(row.pdf_send_log_id ?? ""),
+              )
+              .filter((id) => id),
+          );
+          openedTotal = uniqueSendLogIds.size;
+        }
       } else {
-        openedTotal = Number(openedCount ?? 0);
-      }
-    } else {
-      {
-        const scopePdfIds = optionPdfs.map((p) => p.id);
-        const shouldQuery = Boolean(pdfId) || scopePdfIds.length > 0;
-        if (shouldQuery) {
-          let q = supabase
-            .from("pdf_daily_metrics")
-            .select("day, pdf_id, sent_count, opened_count")
-            .gte("day", startDay);
-          if (pdfId) q = q.eq("pdf_id", pdfId);
-          else q = q.in("pdf_id", scopePdfIds);
-          const { data, error } = await q;
-          if (error) {
-            console.error("[dashboard/metrics] pdf_daily_metrics error", error);
-          } else {
-            for (const row of (data ?? []) as unknown as PdfDailyMetricsRow[]) {
-              sentTotal += Number(row.sent_count ?? 0);
-              openedTotal += Number(row.opened_count ?? 0);
-            }
-          }
+        // companyNameフィルタなし: pdf_open_eventsから直接取得
+        let openedQ = supabase
+          .from("pdf_open_events")
+          .select("pdf_send_log_id", { count: "exact", head: false })
+          .eq("company_id", companyId)
+          .gte("opened_at", startIso);
+
+        if (pdfId) {
+          openedQ = openedQ.eq("pdf_id", pdfId);
+        }
+
+        const { data: openedData, error: openedErr } = await openedQ;
+        if (openedErr) {
+          console.error("[dashboard/metrics] opened count error", openedErr);
+        } else {
+          const uniqueSendLogIds = new Set(
+            (openedData ?? [])
+              .map((row: { pdf_send_log_id?: unknown }) =>
+                String(row.pdf_send_log_id ?? ""),
+              )
+              .filter((id) => id),
+          );
+          openedTotal = uniqueSendLogIds.size;
         }
       }
     }
@@ -376,7 +405,7 @@ export async function GET(request: NextRequest) {
     const viewerSet = new Set(openEvents.map((e) => e.viewer_email));
 
     // openイベントを send_log_id ごとにマップ
-    // - firstOpenedAt: 初回開封日時（インテントスコア計算用）
+    // - firstOpenedAt: 初回開封日時（アプローチ優先度計算用）
     // - lastSeenAt: 最終閲覧日時（表示用）
     // - readPercentageMax: 最大読了率
     const openInfoMap = new Map<
@@ -437,8 +466,12 @@ export async function GET(request: NextRequest) {
       new Set(openEvents.map((e) => e.pdf_send_log_id)),
     );
     const sendLogMap = new Map<string, { company: string }>();
-    // 閲覧回数マップ（保存値を使用）
+    // 閲覧回数マップ（pdf_open_eventsから計算）
     const openCountMap = new Map<string, number>();
+    for (const ev of openEvents) {
+      const count = openCountMap.get(ev.pdf_send_log_id) ?? 0;
+      openCountMap.set(ev.pdf_send_log_id, count + 1);
+    }
 
     const sendLogDetail: Array<{
       id: string;
@@ -447,7 +480,6 @@ export async function GET(request: NextRequest) {
       email: string;
       sentAt?: string;
       firstOpenedAt?: string | null;
-      totalOpenCount?: number;
     }> = [];
     if (sendLogIds.length) {
       const { data: logs, error: logsErr } = await supabase
@@ -469,10 +501,6 @@ export async function GET(request: NextRequest) {
             "(不明)";
           sendLogMap.set(id, { company });
 
-          // 保存値から閲覧回数を取得
-          const totalOpenCount = row.total_open_count ?? 0;
-          openCountMap.set(id, totalOpenCount);
-
           sendLogDetail.push({
             id,
             pdfId: String(row.pdf_id ?? ""),
@@ -480,7 +508,6 @@ export async function GET(request: NextRequest) {
             email: String(row.recipient_email ?? "").trim(),
             sentAt: row.sent_at ?? undefined,
             firstOpenedAt: row.first_opened_at ?? null,
-            totalOpenCount,
           });
         }
       }
@@ -728,7 +755,7 @@ export async function GET(request: NextRequest) {
     const intentScores = sendLogDetail.map((log) => {
       const openInfo = openInfoMap.get(log.id);
       const sentAt = log.sentAt ? new Date(log.sentAt) : null;
-      // インテントスコアは初回開封日時（pdf_open_events.opened_at）で計算
+      // アプローチ優先度は初回開封日時（pdf_open_events.opened_at）で計算
       const firstOpenedAt = openInfo?.firstOpenedAt
         ? new Date(openInfo.firstOpenedAt)
         : null;
@@ -792,7 +819,6 @@ export async function GET(request: NextRequest) {
 
       return {
         company: log.company,
-        contact: "",
         email: emailDisplay || "",
         score,
         sentAt: sentAtDisplay,
@@ -819,7 +845,6 @@ export async function GET(request: NextRequest) {
 
         return {
           company: log.company,
-          contact: "",
           email: log.email || "",
           score: 30, // 未開封はLow
           sentAt: sentAtDisplay,

@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { Tooltip } from "@mantine/core";
 import { UserProfileModal } from "./UserProfileModal";
+import { useSessionValidation } from "@/hooks/useSessionValidation";
 
 export function AppSidebar() {
   const [userName, setUserName] = useState<string>("");
@@ -13,6 +14,9 @@ export function AppSidebar() {
   const [companyName, setCompanyName] = useState<string>("");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const pathname = usePathname();
+
+  // セッション検証（同時ログイン制限）
+  useSessionValidation();
 
   const navItems = [
     {
