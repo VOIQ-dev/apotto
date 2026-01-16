@@ -30,6 +30,7 @@ import {
 } from "ag-grid-community";
 
 import { AppSidebar } from "@/components/AppSidebar";
+import { Chatbot } from "@/components/Chatbot";
 
 // ag-gridモジュール登録
 ModuleRegistry.registerModules([AllCommunityModule]);
@@ -2470,6 +2471,98 @@ export default function AiCustomPage() {
               </button>
             </div>
 
+            {/* 必須項目の説明 */}
+            <div className="mb-4 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 px-4 py-3">
+              <div className="flex items-start gap-2">
+                <svg
+                  className="w-5 h-5 text-blue-600 dark:text-blue-400 mt-0.5 flex-shrink-0"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
+                </svg>
+                <div className="flex-1">
+                  <p className="text-xs font-semibold text-blue-900 dark:text-blue-100 mb-2">
+                    CSV列の形式
+                  </p>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                    <div className="flex items-center gap-1">
+                      <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-rose-500 text-white text-[10px] font-bold">
+                        1
+                      </span>
+                      <span className="text-blue-900 dark:text-blue-200 font-medium">
+                        企業名
+                      </span>
+                      <span className="text-rose-600 dark:text-rose-400 font-bold">
+                        必須
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-rose-500 text-white text-[10px] font-bold">
+                        2
+                      </span>
+                      <span className="text-blue-900 dark:text-blue-200 font-medium">
+                        URL
+                      </span>
+                      <span className="text-rose-600 dark:text-rose-400 font-bold">
+                        必須
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-slate-400 text-white text-[10px] font-bold">
+                        3
+                      </span>
+                      <span className="text-blue-800 dark:text-blue-300">
+                        担当者名
+                      </span>
+                      <span className="text-slate-500 dark:text-slate-400 text-[10px]">
+                        任意
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-slate-400 text-white text-[10px] font-bold">
+                        4
+                      </span>
+                      <span className="text-blue-800 dark:text-blue-300">
+                        部署名
+                      </span>
+                      <span className="text-slate-500 dark:text-slate-400 text-[10px]">
+                        任意
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-slate-400 text-white text-[10px] font-bold">
+                        5
+                      </span>
+                      <span className="text-blue-800 dark:text-blue-300">
+                        役職名
+                      </span>
+                      <span className="text-slate-500 dark:text-slate-400 text-[10px]">
+                        任意
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-slate-400 text-white text-[10px] font-bold">
+                        6
+                      </span>
+                      <span className="text-blue-800 dark:text-blue-300">
+                        メールアドレス
+                      </span>
+                      <span className="text-slate-500 dark:text-slate-400 text-[10px]">
+                        任意
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <label
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
@@ -2905,6 +2998,9 @@ export default function AiCustomPage() {
           </div>
         </div>
       </Modal>
+
+      {/* AIチャットボット */}
+      <Chatbot />
     </div>
   );
 }

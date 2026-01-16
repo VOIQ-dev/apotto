@@ -214,7 +214,6 @@ export async function HEAD(request: NextRequest, context: RouteContext) {
     const pdfRecord = Array.isArray((sendLog as any).pdf)
       ? (sendLog as any).pdf[0]
       : (sendLog as any).pdf;
-
     if (sendLog.is_revoked || pdfRecord?.is_deleted)
       return new NextResponse(null, { status: 410 });
     return new NextResponse(null, { status: 200 });
