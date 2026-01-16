@@ -134,13 +134,19 @@ export const LeadSchema = z.object({
   contactName: z
     .string()
     .max(100, "担当者名は100文字以下にしてください")
-    .optional(),
+    .optional()
+    .or(z.literal("")),
   department: z
     .string()
     .max(100, "部署名は100文字以下にしてください")
-    .optional(),
-  title: z.string().max(100, "役職名は100文字以下にしてください").optional(),
-  email: emailSchema.optional(),
+    .optional()
+    .or(z.literal("")),
+  title: z
+    .string()
+    .max(100, "役職名は100文字以下にしてください")
+    .optional()
+    .or(z.literal("")),
+  email: emailSchema.optional().or(z.literal("")),
 });
 
 /**
