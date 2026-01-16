@@ -1807,6 +1807,38 @@ export default function AiCustomPage() {
 
         const importData = await importRes.json();
         if (!importRes.ok) {
+          // バリデーションエラーの詳細を表示
+          if (importData.errors && Object.keys(importData.errors).length > 0) {
+            const errorMessages: string[] = [];
+            for (const [field, message] of Object.entries(importData.errors)) {
+              // フィールド名を日本語に変換
+              const match = field.match(/^leads\.(\d+)\.(.+)$/);
+              if (match) {
+                const rowNum = parseInt(match[1], 10) + 2; // ヘッダー行を考慮して+2
+                const fieldName = match[2];
+                const fieldNameJa =
+                  fieldName === "companyName"
+                    ? "企業名"
+                    : fieldName === "homepageUrl"
+                      ? "URL"
+                      : fieldName === "contactName"
+                        ? "担当者名"
+                        : fieldName === "department"
+                          ? "部署名"
+                          : fieldName === "title"
+                            ? "役職名"
+                            : fieldName === "email"
+                              ? "メールアドレス"
+                              : fieldName;
+                errorMessages.push(`${rowNum}行目の${fieldNameJa}: ${message}`);
+              } else {
+                errorMessages.push(`${field}: ${message}`);
+              }
+            }
+            throw new Error(
+              `CSVの内容にエラーがあります:\n${errorMessages.join("\n")}`,
+            );
+          }
           throw new Error(importData.error || "インポートに失敗しました");
         }
 
@@ -1832,6 +1864,10 @@ export default function AiCustomPage() {
           ...prev,
           error: message,
         }));
+        showToast(
+          message.split("\n")[0] || "CSV読み込みに失敗しました",
+          "error",
+        );
         console.debug("[ai-custom] excel upload failed", message);
         pushLog("⚠️ Excel/CSVの読み込みに失敗しました。");
       }
@@ -2629,9 +2665,14 @@ export default function AiCustomPage() {
                   </p>
                 </div>
                 {uploadState.error && (
-                  <span className="text-xs text-rose-500">
-                    {uploadState.error}
-                  </span>
+                  <div className="mt-2 rounded-md bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 px-3 py-2">
+                    <p className="text-xs font-semibold text-rose-700 dark:text-rose-400 mb-1">
+                      エラー
+                    </p>
+                    <p className="text-xs text-rose-600 dark:text-rose-300 whitespace-pre-line">
+                      {uploadState.error}
+                    </p>
+                  </div>
                 )}
               </div>
             )}
