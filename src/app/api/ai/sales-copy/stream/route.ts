@@ -202,6 +202,8 @@ function normalizeOutput(
     companyName: string;
     fullName: string;
     subject: string;
+    email?: string;
+    phone?: string;
   },
 ) {
   const trimmed = text.trim();
@@ -213,13 +215,21 @@ function normalizeOutput(
   const defaultSubject = `${companyName}のご提案`;
   const subjectLine = resolvePlaceholder(sender.subject, defaultSubject);
   if (!hasSubject) {
-    out = `件名: ${subjectLine}\n` + out;
+    out = `件名: ${subjectLine}\n\n` + out;
   }
   if (!hasBody) {
     out = out.replace(/^件名\s*:.+$/m, (line) => `${line}\n本文:`);
   }
   // 本文の末尾が読点/句点等で終わらなければ丁寧な締めと署名を追加
-  const closing = `\n\n何卒よろしくお願いいたします。\n${companyName}\n${fullName}`;
+  const email =
+    sender.email && sender.email !== "{{MISSING}}"
+      ? `\nEmail: ${sender.email}`
+      : "";
+  const phone =
+    sender.phone && sender.phone !== "{{MISSING}}"
+      ? `\nTEL: ${sender.phone}`
+      : "";
+  const closing = `\n\n===================\n${companyName}\n${fullName}${email}${phone}\n===================`;
   if (!/[。．！!？?」』）)\]]\s*$/.test(out)) {
     out = out + "。";
   }
@@ -236,7 +246,13 @@ function composeFallbackCopy({
   attachments = [],
   notes,
 }: {
-  sender: { companyName: string; fullName: string; subject: string };
+  sender: {
+    companyName: string;
+    fullName: string;
+    subject: string;
+    email?: string;
+    phone?: string;
+  };
   recipient: {
     companyName?: string;
     contactName?: string;
@@ -266,26 +282,29 @@ function composeFallbackCopy({
 
   const attachSection =
     attachments.length > 0
-      ? `\n\n詳細につきましては、以下の資料をご参照ください。\n${attachments.map((a, i) => `${i + 1}. ${a.name}\n   ${a.url}`).join("\n")}`
+      ? `\n\n━━━━━━━━━━━━━━━\n■ 資料\n${attachments.map((a) => `・${a.name}\n  ${a.url}`).join("\n")}\n━━━━━━━━━━━━━━━`
       : "";
 
   const notesSection = notes?.trim() ? `\n\n【補足】\n${notes.trim()}` : "";
 
   const body = `${greeting}
 
-突然のご連絡失礼いたします。
-${senderCompany}の${senderName}と申します。
+お世話になっております。${senderCompany}の${senderName}です。
+突然のご連絡となり誠に恐れ入ります。
 
 貴社のWebサイトを拝見し、${sitePreview}という点に大変興味を持ちました。
 
-弊社では、同業界の企業様に対して業務効率化や生産性向上のご支援をさせていただいており、貴社にもお役立ていただける可能性があると考え、ご連絡差し上げました。${attachSection}${notesSection}
+━━━━━━━━━━━━━━━
+■ ご相談概要
+弊社では、同業界の企業様に対して業務効率化や生産性向上のご支援をさせていただいており、
+貴社にもお役立ていただける可能性があると考え、ご連絡差し上げました。${attachSection}
+━━━━━━━━━━━━━━━
+${notesSection}
 
-もしご興味をお持ちいただけましたら、15分程度のオンライン打ち合わせでご説明させていただけますと幸いです。
+少しでもご興味がございましたら、
+オンラインにてご説明させていただきたく存じます。
 
-お忙しいところ恐縮ですが、ご検討のほどよろしくお願いいたします。
-
-${senderCompany}
-${senderName}`;
+以上、お手数ですが、ご確認のほどよろしくお願い申し上げます。`;
 
   return normalizeOutput(`件名: ${subject}\n\n本文:\n${body}`, sender);
 }
