@@ -16,7 +16,8 @@ app.use(
   }),
 );
 
-app.use(express.json());
+// JSONペイロードサイズ制限を10MBに拡張（100件バッチ処理対応）
+app.use(express.json({ limit: "10mb" }));
 
 // ヘルスチェック
 app.get("/health", (_req, res) => {

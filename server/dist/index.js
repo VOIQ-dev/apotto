@@ -11,7 +11,8 @@ app.use(cors({
     methods: ["POST", "OPTIONS"],
     credentials: true,
 }));
-app.use(express.json());
+// JSONペイロードサイズ制限を10MBに拡張（100件バッチ処理対応）
+app.use(express.json({ limit: '10mb' }));
 // ヘルスチェック
 app.get("/health", (_req, res) => {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
@@ -31,8 +32,8 @@ app.post("/auto-submit", async (req, res) => {
         // ローカルログ出力
         console.log(`[auto-submit] ${payload.url} - success=${result.success}`);
         if (!result.success) {
-            console.log(`[auto-submit] Failure reason: ${result.note || 'Unknown'}`);
-            console.log(`[auto-submit] Logs:\n${result.logs.join('\n')}`);
+            console.log(`[auto-submit] Failure reason: ${result.note || "Unknown"}`);
+            console.log(`[auto-submit] Logs:\n${result.logs.join("\n")}`);
         }
         return res.json(result);
     }
@@ -88,8 +89,8 @@ app.post("/auto-submit/batch", async (req, res) => {
                 // ローカルログ出力
                 console.log(`[auto-submit/batch] ${i + 1}/${items.length} ${payload.url} - success=${result.success}`);
                 if (!result.success) {
-                    console.log(`[auto-submit/batch] Failure reason: ${result.note || 'Unknown'}`);
-                    console.log(`[auto-submit/batch] Logs:\n${result.logs.join('\n')}`);
+                    console.log(`[auto-submit/batch] Failure reason: ${result.note || "Unknown"}`);
+                    console.log(`[auto-submit/batch] Logs:\n${result.logs.join("\n")}`);
                 }
                 // 処理完了を通知
                 res.write(`data: ${JSON.stringify({
@@ -508,10 +509,10 @@ async function findAndFillForm(page, payload, log) {
     const captchaSelectors = [
         'iframe[src*="recaptcha"]',
         'iframe[src*="hcaptcha"]',
-        '.g-recaptcha',
+        ".g-recaptcha",
         'div[class*="recaptcha"]',
-        'div[data-sitekey]',
-        '.h-captcha',
+        "div[data-sitekey]",
+        ".h-captcha",
         'div[class*="hcaptcha"]',
     ];
     for (const sel of captchaSelectors) {
@@ -855,11 +856,33 @@ async function findAndFillForm(page, payload, log) {
             value: payload.fullNameKana,
         },
         {
-            keywords: ["姓（ふりがな）", "姓（カナ）", "姓（フリガナ）", "姓（カタカナ）", "姓(ふりがな)", "姓(カナ)", "せい", "セイ", "みょうじ", "ミョウジ"],
+            keywords: [
+                "姓（ふりがな）",
+                "姓（カナ）",
+                "姓（フリガナ）",
+                "姓（カタカナ）",
+                "姓(ふりがな)",
+                "姓(カナ)",
+                "せい",
+                "セイ",
+                "みょうじ",
+                "ミョウジ",
+            ],
             value: payload.lastNameKana,
         },
         {
-            keywords: ["名（ふりがな）", "名（カナ）", "名（フリガナ）", "名（カタカナ）", "名(ふりがな)", "名(カナ)", "めい", "メイ", "なまえ", "ナマエ"],
+            keywords: [
+                "名（ふりがな）",
+                "名（カナ）",
+                "名（フリガナ）",
+                "名（カタカナ）",
+                "名(ふりがな)",
+                "名(カナ)",
+                "めい",
+                "メイ",
+                "なまえ",
+                "ナマエ",
+            ],
             value: payload.firstNameKana,
         },
         { keywords: ["メール", "E-mail", "Email"], value: payload.email },
@@ -990,71 +1013,135 @@ async function findAndFillForm(page, payload, log) {
                 const fieldHint = `${inputName}${inputId}${placeholder}${ariaLabel}${title}`.toLowerCase();
                 let defaultValue = "";
                 // メールアドレス
-                if (inputType === "email" || fieldHint.includes("mail") || fieldHint.includes("メール")) {
+                if (inputType === "email" ||
+                    fieldHint.includes("mail") ||
+                    fieldHint.includes("メール")) {
                     defaultValue = payload.email || "test@example.com";
                     // 電話番号
                 }
-                else if (inputType === "tel" || fieldHint.includes("tel") || fieldHint.includes("phone") || fieldHint.includes("電話")) {
+                else if (inputType === "tel" ||
+                    fieldHint.includes("tel") ||
+                    fieldHint.includes("phone") ||
+                    fieldHint.includes("電話")) {
                     defaultValue = payload.phone || "03-1234-5678";
                     // 姓（漢字）
                 }
-                else if (fieldHint.includes("last_name") || fieldHint.includes("lastname") || fieldHint.includes("sei") || (fieldHint.includes("姓") && !fieldHint.includes("ふりがな") && !fieldHint.includes("カナ"))) {
+                else if (fieldHint.includes("last_name") ||
+                    fieldHint.includes("lastname") ||
+                    fieldHint.includes("sei") ||
+                    (fieldHint.includes("姓") &&
+                        !fieldHint.includes("ふりがな") &&
+                        !fieldHint.includes("カナ"))) {
                     defaultValue = payload.lastName || "山田";
                     // 名（漢字）
                 }
-                else if (fieldHint.includes("first_name") || fieldHint.includes("firstname") || fieldHint.includes("mei") || (fieldHint.includes("名") && !fieldHint.includes("姓") && !fieldHint.includes("会社") && !fieldHint.includes("氏") && !fieldHint.includes("ふりがな") && !fieldHint.includes("カナ"))) {
+                else if (fieldHint.includes("first_name") ||
+                    fieldHint.includes("firstname") ||
+                    fieldHint.includes("mei") ||
+                    (fieldHint.includes("名") &&
+                        !fieldHint.includes("姓") &&
+                        !fieldHint.includes("会社") &&
+                        !fieldHint.includes("氏") &&
+                        !fieldHint.includes("ふりがな") &&
+                        !fieldHint.includes("カナ"))) {
                     defaultValue = payload.firstName || "太郎";
                     // 姓（ふりがな）
                 }
-                else if ((fieldHint.includes("姓") && (fieldHint.includes("ふりがな") || fieldHint.includes("カナ"))) || fieldHint.includes("せい") || fieldHint.includes("みょうじ")) {
+                else if ((fieldHint.includes("姓") &&
+                    (fieldHint.includes("ふりがな") || fieldHint.includes("カナ"))) ||
+                    fieldHint.includes("せい") ||
+                    fieldHint.includes("みょうじ")) {
                     defaultValue = payload.lastNameKana || "やまだ";
                     // 名（ふりがな）
                 }
-                else if ((fieldHint.includes("名") && (fieldHint.includes("ふりがな") || fieldHint.includes("カナ"))) || fieldHint.includes("めい") || fieldHint.includes("なまえ")) {
+                else if ((fieldHint.includes("名") &&
+                    (fieldHint.includes("ふりがな") || fieldHint.includes("カナ"))) ||
+                    fieldHint.includes("めい") ||
+                    fieldHint.includes("なまえ")) {
                     defaultValue = payload.firstNameKana || "たろう";
                     // フルネーム（ふりがな）
                 }
-                else if (fieldHint.includes("kana") || fieldHint.includes("フリガナ") || fieldHint.includes("ふりがな") || fieldHint.includes("hurigana") || fieldHint.includes("よみがな") || fieldHint.includes("カナ") || fieldHint.includes("かな") || fieldHint.includes("カタカナ") || fieldHint.includes("ヨミガナ")) {
+                else if (fieldHint.includes("kana") ||
+                    fieldHint.includes("フリガナ") ||
+                    fieldHint.includes("ふりがな") ||
+                    fieldHint.includes("hurigana") ||
+                    fieldHint.includes("よみがな") ||
+                    fieldHint.includes("カナ") ||
+                    fieldHint.includes("かな") ||
+                    fieldHint.includes("カタカナ") ||
+                    fieldHint.includes("ヨミガナ")) {
                     defaultValue = payload.fullNameKana || "やまだ たろう";
                     // 氏名・名前
                 }
-                else if (fieldHint.includes("name") || fieldHint.includes("氏名") || fieldHint.includes("名前") || fieldHint.includes("お名前")) {
+                else if (fieldHint.includes("name") ||
+                    fieldHint.includes("氏名") ||
+                    fieldHint.includes("名前") ||
+                    fieldHint.includes("お名前")) {
                     defaultValue = payload.name || "山田 太郎";
                     // 会社名
                 }
-                else if (fieldHint.includes("company") || fieldHint.includes("corp") || fieldHint.includes("会社") || fieldHint.includes("企業") || fieldHint.includes("御社") || fieldHint.includes("貴社")) {
+                else if (fieldHint.includes("company") ||
+                    fieldHint.includes("corp") ||
+                    fieldHint.includes("会社") ||
+                    fieldHint.includes("企業") ||
+                    fieldHint.includes("御社") ||
+                    fieldHint.includes("貴社")) {
                     defaultValue = payload.company || "テスト株式会社";
                     // 部署
                 }
-                else if (fieldHint.includes("department") || fieldHint.includes("division") || fieldHint.includes("busho") || fieldHint.includes("部署") || fieldHint.includes("所属")) {
+                else if (fieldHint.includes("department") ||
+                    fieldHint.includes("division") ||
+                    fieldHint.includes("busho") ||
+                    fieldHint.includes("部署") ||
+                    fieldHint.includes("所属")) {
                     defaultValue = payload.department || "営業部";
                     // 役職
                 }
-                else if (fieldHint.includes("position") || fieldHint.includes("post") || fieldHint.includes("title") || fieldHint.includes("役職") || fieldHint.includes("肩書")) {
+                else if (fieldHint.includes("position") ||
+                    fieldHint.includes("post") ||
+                    fieldHint.includes("title") ||
+                    fieldHint.includes("役職") ||
+                    fieldHint.includes("肩書")) {
                     defaultValue = payload.title || "";
                     // 郵便番号
                 }
-                else if (fieldHint.includes("zip") || fieldHint.includes("postal") || fieldHint.includes("郵便") || fieldHint.includes("〒")) {
+                else if (fieldHint.includes("zip") ||
+                    fieldHint.includes("postal") ||
+                    fieldHint.includes("郵便") ||
+                    fieldHint.includes("〒")) {
                     defaultValue = payload.postalCode || "100-0001";
                     // 都道府県
                 }
-                else if (fieldHint.includes("pref") || fieldHint.includes("都道府県") || fieldHint.includes("todofuken")) {
+                else if (fieldHint.includes("pref") ||
+                    fieldHint.includes("都道府県") ||
+                    fieldHint.includes("todofuken")) {
                     defaultValue = payload.prefecture || "東京都";
                     // 市区町村
                 }
-                else if (fieldHint.includes("city") || fieldHint.includes("市区町村") || fieldHint.includes("shiku")) {
+                else if (fieldHint.includes("city") ||
+                    fieldHint.includes("市区町村") ||
+                    fieldHint.includes("shiku")) {
                     defaultValue = payload.city || "千代田区";
                     // 住所
                 }
-                else if (fieldHint.includes("address") || fieldHint.includes("street") || fieldHint.includes("住所") || fieldHint.includes("番地")) {
+                else if (fieldHint.includes("address") ||
+                    fieldHint.includes("street") ||
+                    fieldHint.includes("住所") ||
+                    fieldHint.includes("番地")) {
                     defaultValue = payload.address || "千代田1-1";
                     // 建物名
                 }
-                else if (fieldHint.includes("building") || fieldHint.includes("建物") || fieldHint.includes("ビル") || fieldHint.includes("マンション")) {
+                else if (fieldHint.includes("building") ||
+                    fieldHint.includes("建物") ||
+                    fieldHint.includes("ビル") ||
+                    fieldHint.includes("マンション")) {
                     defaultValue = payload.building || "";
                     // URL
                 }
-                else if (fieldHint.includes("url") || fieldHint.includes("website") || fieldHint.includes("homepage") || fieldHint.includes("ホームページ")) {
+                else if (fieldHint.includes("url") ||
+                    fieldHint.includes("website") ||
+                    fieldHint.includes("homepage") ||
+                    fieldHint.includes("ホームページ")) {
                     defaultValue = "https://example.com";
                     // その他
                 }
@@ -1079,7 +1166,8 @@ async function findAndFillForm(page, payload, log) {
         try {
             const currentValue = await textarea.inputValue({ timeout: 2000 });
             if (!currentValue || currentValue.trim() === "") {
-                await textarea.fill(payload.message || "お問い合わせありがとうございます。詳細についてご連絡ください。", { timeout: 2000 });
+                await textarea.fill(payload.message ||
+                    "お問い合わせありがとうございます。詳細についてご連絡ください。", { timeout: 2000 });
                 log(`Filled required textarea with default message`);
             }
         }
@@ -1106,40 +1194,76 @@ async function findAndFillForm(page, payload, log) {
             const hintLower = hint.toLowerCase();
             let valueToFill = "";
             // placeholder/aria-label/titleに基づいて値を決定
-            if (hintLower.includes("メール") || hintLower.includes("mail") || hintLower.includes("email")) {
+            if (hintLower.includes("メール") ||
+                hintLower.includes("mail") ||
+                hintLower.includes("email")) {
                 valueToFill = payload.email || "";
             }
-            else if (hintLower.includes("電話") || hintLower.includes("tel") || hintLower.includes("phone")) {
+            else if (hintLower.includes("電話") ||
+                hintLower.includes("tel") ||
+                hintLower.includes("phone")) {
                 valueToFill = payload.phone || "";
             }
-            else if (hintLower.includes("会社") || hintLower.includes("企業") || hintLower.includes("御社") || hintLower.includes("貴社") || hintLower.includes("company")) {
+            else if (hintLower.includes("会社") ||
+                hintLower.includes("企業") ||
+                hintLower.includes("御社") ||
+                hintLower.includes("貴社") ||
+                hintLower.includes("company")) {
                 valueToFill = payload.company || "";
             }
-            else if (hintLower.includes("部署") || hintLower.includes("所属") || hintLower.includes("department")) {
+            else if (hintLower.includes("部署") ||
+                hintLower.includes("所属") ||
+                hintLower.includes("department")) {
                 valueToFill = payload.department || "";
             }
-            else if (hintLower.includes("役職") || hintLower.includes("肩書") || hintLower.includes("position")) {
+            else if (hintLower.includes("役職") ||
+                hintLower.includes("肩書") ||
+                hintLower.includes("position")) {
                 valueToFill = payload.title || "";
             }
-            else if (hintLower.includes("姓") && (hintLower.includes("ふりがな") || hintLower.includes("カナ") || hintLower.includes("kana"))) {
+            else if (hintLower.includes("姓") &&
+                (hintLower.includes("ふりがな") ||
+                    hintLower.includes("カナ") ||
+                    hintLower.includes("kana"))) {
                 valueToFill = payload.lastNameKana || "";
             }
-            else if (hintLower.includes("名") && (hintLower.includes("ふりがな") || hintLower.includes("カナ") || hintLower.includes("kana"))) {
+            else if (hintLower.includes("名") &&
+                (hintLower.includes("ふりがな") ||
+                    hintLower.includes("カナ") ||
+                    hintLower.includes("kana"))) {
                 valueToFill = payload.firstNameKana || "";
             }
-            else if (hintLower.includes("姓") || hintLower.includes("苗字") || hintLower.includes("last")) {
+            else if (hintLower.includes("姓") ||
+                hintLower.includes("苗字") ||
+                hintLower.includes("last")) {
                 valueToFill = payload.lastName || "";
             }
-            else if (hintLower.includes("名") && !hintLower.includes("氏") && !hintLower.includes("姓") && !hintLower.includes("会社")) {
+            else if (hintLower.includes("名") &&
+                !hintLower.includes("氏") &&
+                !hintLower.includes("姓") &&
+                !hintLower.includes("会社")) {
                 valueToFill = payload.firstName || "";
             }
-            else if (hintLower.includes("ふりがな") || hintLower.includes("フリガナ") || hintLower.includes("よみがな") || hintLower.includes("kana") || hintLower.includes("カナ") || hintLower.includes("かな") || hintLower.includes("カタカナ") || hintLower.includes("ヨミガナ")) {
+            else if (hintLower.includes("ふりがな") ||
+                hintLower.includes("フリガナ") ||
+                hintLower.includes("よみがな") ||
+                hintLower.includes("kana") ||
+                hintLower.includes("カナ") ||
+                hintLower.includes("かな") ||
+                hintLower.includes("カタカナ") ||
+                hintLower.includes("ヨミガナ")) {
                 valueToFill = payload.fullNameKana || "";
             }
-            else if (hintLower.includes("名前") || hintLower.includes("氏名") || hintLower.includes("お名前") || hintLower.includes("name")) {
+            else if (hintLower.includes("名前") ||
+                hintLower.includes("氏名") ||
+                hintLower.includes("お名前") ||
+                hintLower.includes("name")) {
                 valueToFill = payload.name || "";
             }
-            else if (hintLower.includes("郵便") || hintLower.includes("〒") || hintLower.includes("zip") || hintLower.includes("postal")) {
+            else if (hintLower.includes("郵便") ||
+                hintLower.includes("〒") ||
+                hintLower.includes("zip") ||
+                hintLower.includes("postal")) {
                 valueToFill = payload.postalCode || "";
             }
             else if (hintLower.includes("都道府県") || hintLower.includes("pref")) {
@@ -1148,10 +1272,14 @@ async function findAndFillForm(page, payload, log) {
             else if (hintLower.includes("市区町村") || hintLower.includes("city")) {
                 valueToFill = payload.city || "";
             }
-            else if (hintLower.includes("住所") || hintLower.includes("番地") || hintLower.includes("address")) {
+            else if (hintLower.includes("住所") ||
+                hintLower.includes("番地") ||
+                hintLower.includes("address")) {
                 valueToFill = payload.address || "";
             }
-            else if (hintLower.includes("建物") || hintLower.includes("ビル") || hintLower.includes("building")) {
+            else if (hintLower.includes("建物") ||
+                hintLower.includes("ビル") ||
+                hintLower.includes("building")) {
                 valueToFill = payload.building || "";
             }
             if (valueToFill) {
@@ -1385,7 +1513,9 @@ async function locateFirst(page, scope, selectors) {
         if ((await loc.count()) > 0) {
             // fill()できない要素タイプはスキップ（radio, checkbox, hidden）
             const inputType = await loc.getAttribute("type");
-            if (inputType === "radio" || inputType === "checkbox" || inputType === "hidden") {
+            if (inputType === "radio" ||
+                inputType === "checkbox" ||
+                inputType === "hidden") {
                 continue;
             }
             return loc;
@@ -1446,7 +1576,7 @@ async function fillByLabel(page, scope, rules, log) {
                 const forId = await label.getAttribute("for");
                 if (forId) {
                     // CSS.escapeはNode.js環境で未定義のため、完全なエスケープを実装
-                    let escapedId = forId.replace(/([^\w-])/g, '\\$1');
+                    let escapedId = forId.replace(/([^\w-])/g, "\\$1");
                     // 数字で始まる場合は \3X 形式でエスケープ（スペースで終端）
                     if (/^[0-9]/.test(escapedId)) {
                         escapedId = `\\3${escapedId[0]} ${escapedId.slice(1)}`;
@@ -1454,8 +1584,12 @@ async function fillByLabel(page, scope, rules, log) {
                     const target = scope.locator(`#${escapedId}`);
                     if ((await target.count()) > 0) {
                         // チェックボックスやラジオボタンにはfill()できないのでスキップ
-                        const inputType = await target.getAttribute("type").catch(() => null);
-                        if (inputType === "radio" || inputType === "checkbox" || inputType === "hidden") {
+                        const inputType = await target
+                            .getAttribute("type")
+                            .catch(() => null);
+                        if (inputType === "radio" ||
+                            inputType === "checkbox" ||
+                            inputType === "hidden") {
                             continue;
                         }
                         await target.fill(rule.value, { timeout: 3000 }).catch(() => { });
