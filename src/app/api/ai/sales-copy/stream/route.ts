@@ -23,6 +23,11 @@ type RequestBody = {
     fullName?: string;
     email?: string;
     phone?: string;
+    postalCode?: string;
+    prefecture?: string;
+    city?: string;
+    address?: string;
+    building?: string;
     subject?: string;
     meetingUrl?: string;
   };
@@ -150,6 +155,11 @@ function validateSender(sender: RequestBody["sender"]): NonNullable<
     fullName: normalizeWithPlaceholder(sender.fullName),
     email: normalizeWithPlaceholder(sender.email),
     phone: normalizeWithPlaceholder(sender.phone),
+    postalCode: normalizeWithPlaceholder(sender.postalCode),
+    prefecture: normalizeWithPlaceholder(sender.prefecture),
+    city: normalizeWithPlaceholder(sender.city),
+    address: normalizeWithPlaceholder(sender.address),
+    building: normalizeWithPlaceholder(sender.building),
     subject: normalizeWithPlaceholder(sender.subject),
     meetingUrl: sender.meetingUrl?.trim() || undefined,
   };
@@ -204,6 +214,13 @@ function normalizeOutput(
     subject: string;
     email?: string;
     phone?: string;
+    department?: string;
+    title?: string;
+    postalCode?: string;
+    prefecture?: string;
+    city?: string;
+    address?: string;
+    building?: string;
   },
 ) {
   const trimmed = text.trim();
@@ -221,15 +238,43 @@ function normalizeOutput(
     out = out.replace(/^件名\s*:.+$/m, (line) => `${line}\n本文:`);
   }
   // 本文の末尾が読点/句点等で終わらなければ丁寧な締めと署名を追加
+  const department =
+    sender.department && sender.department !== "{{MISSING}}"
+      ? `${sender.department} `
+      : "";
+  const title =
+    sender.title && sender.title !== "{{MISSING}}" ? `${sender.title}　` : "";
+
+  // 住所情報を組み立て
+  const addressParts = [];
+  if (sender.postalCode && sender.postalCode !== "{{MISSING}}") {
+    addressParts.push(`〒${sender.postalCode}`);
+  }
+  const addressLine = [
+    sender.prefecture && sender.prefecture !== "{{MISSING}}"
+      ? sender.prefecture
+      : "",
+    sender.city && sender.city !== "{{MISSING}}" ? sender.city : "",
+    sender.address && sender.address !== "{{MISSING}}" ? sender.address : "",
+    sender.building && sender.building !== "{{MISSING}}" ? sender.building : "",
+  ]
+    .filter(Boolean)
+    .join("");
+  if (addressLine) {
+    addressParts.push(addressLine);
+  }
+  const addressText =
+    addressParts.length > 0 ? `\n住所: ${addressParts.join(" ")}` : "";
+
   const email =
     sender.email && sender.email !== "{{MISSING}}"
-      ? `\nEmail: ${sender.email}`
+      ? `\nメール: ${sender.email}`
       : "";
   const phone =
     sender.phone && sender.phone !== "{{MISSING}}"
-      ? `\nTEL: ${sender.phone}`
+      ? `\n電話: ${sender.phone}`
       : "";
-  const closing = `\n\n===================\n${companyName}\n${fullName}${email}${phone}\n===================`;
+  const closing = `\n\n===================\n${companyName}\n${department}${title}${fullName}${addressText}${phone}${email}\n===================`;
   if (!/[。．！!？?」』）)\]]\s*$/.test(out)) {
     out = out + "。";
   }
@@ -252,6 +297,13 @@ function composeFallbackCopy({
     subject: string;
     email?: string;
     phone?: string;
+    department?: string;
+    title?: string;
+    postalCode?: string;
+    prefecture?: string;
+    city?: string;
+    address?: string;
+    building?: string;
   };
   recipient: {
     companyName?: string;

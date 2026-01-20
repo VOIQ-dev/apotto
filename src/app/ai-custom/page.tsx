@@ -2751,45 +2751,44 @@ export default function AiCustomPage() {
             />
           </div>
 
-          <div className="mt-4 flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <span className="text-sm text-muted-foreground">
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-4 shrink-0">
+              <span className="text-sm text-muted-foreground whitespace-nowrap">
                 選択中:{" "}
                 <span className="font-bold text-primary">
                   {selectedLeadIds.size}
                 </span>{" "}
                 件
               </span>
-              <span className="text-sm text-muted-foreground">
+              <span className="text-sm text-muted-foreground whitespace-nowrap">
                 全 {leads.length} 件
               </span>
-            </div>
-
-            <div className="flex items-center gap-3">
               {leadsTotalPages > 1 && (
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
                     onClick={() => void fetchLeads(leadsPage - 1)}
                     disabled={leadsPage <= 1 || leadsLoading}
-                    className="btn-secondary text-xs"
+                    className="btn-secondary text-xs px-2 py-1"
                   >
-                    前へ
+                    前
                   </button>
-                  <span className="text-sm text-muted-foreground">
+                  <span className="text-sm text-muted-foreground whitespace-nowrap">
                     {leadsPage} / {leadsTotalPages}
                   </span>
                   <button
                     type="button"
                     onClick={() => void fetchLeads(leadsPage + 1)}
                     disabled={leadsPage >= leadsTotalPages || leadsLoading}
-                    className="btn-secondary text-xs"
+                    className="btn-secondary text-xs px-2 py-1"
                   >
-                    次へ
+                    次
                   </button>
                 </div>
               )}
+            </div>
 
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={handleGenerateSelectedLeads}
@@ -2799,7 +2798,7 @@ export default function AiCustomPage() {
                   autoRunStatus === "running" ||
                   !isAllRequiredFieldsFilled
                 }
-                className="btn-secondary min-w-[180px]"
+                className="btn-secondary whitespace-nowrap px-4 py-2"
                 title={
                   !isAllRequiredFieldsFilled
                     ? "必須項目を全て入力してください"
@@ -2815,7 +2814,7 @@ export default function AiCustomPage() {
                 type="button"
                 onClick={() => void handleSimulateSend()}
                 disabled={isSending || sendableReadyCards.length === 0}
-                className="btn-secondary min-w-[180px]"
+                className="btn-secondary whitespace-nowrap px-4 py-2"
               >
                 {isSending
                   ? "送信中..."
@@ -2832,7 +2831,7 @@ export default function AiCustomPage() {
                   queueState.running ||
                   !isAllRequiredFieldsFilled
                 }
-                className="btn-primary min-w-[180px]"
+                className="btn-primary whitespace-nowrap px-4 py-2"
                 title={
                   !isAllRequiredFieldsFilled
                     ? "必須項目を全て入力してください"

@@ -830,7 +830,7 @@ async function findAndFillForm(
       ],
     },
     {
-      value: payload.postalCode || "100-0001",
+      value: payload.postalCode,
       selectors: [
         "input[name*='zip']",
         "input[name*='postal']",
@@ -843,7 +843,17 @@ async function findAndFillForm(
       ],
     },
     {
-      value: payload.city || "千代田区",
+      value: payload.prefecture,
+      selectors: [
+        "input[name*='pref']",
+        "input[name*='todofuken']",
+        "input[id*='pref']",
+        "input[id*='todofuken']",
+        "input[placeholder*='都道府県']",
+      ],
+    },
+    {
+      value: payload.city,
       selectors: [
         "input[name*='city']",
         "input[name*='shiku']",
@@ -853,7 +863,7 @@ async function findAndFillForm(
       ],
     },
     {
-      value: payload.address || "千代田1-1",
+      value: payload.address,
       selectors: [
         "input[name*='address']",
         "input[name*='street']",
@@ -1018,15 +1028,19 @@ async function findAndFillForm(
       },
       {
         keywords: ["郵便番号", "〒", "Postal", "Zip", "Zipcode"],
-        value: payload.postalCode || "100-0001",
+        value: payload.postalCode,
+      },
+      {
+        keywords: ["都道府県", "Prefecture"],
+        value: payload.prefecture,
       },
       {
         keywords: ["市区町村", "市町村", "City"],
-        value: payload.city || "千代田区",
+        value: payload.city,
       },
       {
         keywords: ["住所", "番地", "Address", "Street"],
-        value: payload.address || "千代田1-1",
+        value: payload.address,
       },
       {
         keywords: ["建物", "ビル", "Building"],
@@ -1247,21 +1261,21 @@ async function findAndFillForm(
           fieldHint.includes("郵便") ||
           fieldHint.includes("〒")
         ) {
-          defaultValue = payload.postalCode || "100-0001";
+          defaultValue = payload.postalCode || "";
           // 都道府県
         } else if (
           fieldHint.includes("pref") ||
           fieldHint.includes("都道府県") ||
           fieldHint.includes("todofuken")
         ) {
-          defaultValue = payload.prefecture || "東京都";
+          defaultValue = payload.prefecture || "";
           // 市区町村
         } else if (
           fieldHint.includes("city") ||
           fieldHint.includes("市区町村") ||
           fieldHint.includes("shiku")
         ) {
-          defaultValue = payload.city || "千代田区";
+          defaultValue = payload.city || "";
           // 住所
         } else if (
           fieldHint.includes("address") ||
@@ -1269,7 +1283,7 @@ async function findAndFillForm(
           fieldHint.includes("住所") ||
           fieldHint.includes("番地")
         ) {
-          defaultValue = payload.address || "千代田1-1";
+          defaultValue = payload.address || "";
           // 建物名
         } else if (
           fieldHint.includes("building") ||
