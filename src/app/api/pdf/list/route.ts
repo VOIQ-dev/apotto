@@ -1,21 +1,43 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from "next/server";
 
-import { createSupabaseServiceClient } from '@/lib/supabaseServer';
-import { applyAuthCookies, getAccountContextFromRequest } from '@/lib/routeAuth';
-const bucketName = process.env.NEXT_PUBLIC_SUPABASE_BUCKET || 'pdf-assets';
+import { createSupabaseServiceClient } from "@/lib/supabaseServer";
+import {
+  applyAuthCookies,
+  getAccountContextFromRequest,
+} from "@/lib/routeAuth";
+const bucketName = process.env.NEXT_PUBLIC_SUPABASE_BUCKET || "pdf-assets";
 export async function GET(request: NextRequest) {
+  let companyId: string | null = null;
+  let account: any = null;
   try {
-    const { user, companyId, cookieMutations } =
-      await getAccountContextFromRequest(request);
+    const {
+      user,
+      companyId: cId,
+      cookieMutations,
+      account: acc,
+    } = await getAccountContextFromRequest(request);
+    companyId = cId;
+    account = acc;
     if (!user) {
-      const res = NextResponse.json({ error: '認証が必要です' }, { status: 401 });
+      console.error("[GET /api/pdf/list] Unauthorized - No user", {
+        hasAccount: !!account,
+      });
+      const res = NextResponse.json(
+        { error: "認証が必要です" },
+        { status: 401 },
+      );
       applyAuthCookies(res, cookieMutations);
       return res;
     }
     if (!companyId) {
+      console.error("[GET /api/pdf/list] Forbidden - No company ID", {
+        email: account?.email,
+        userId: user?.id,
+        hasAccount: !!account,
+      });
       const res = NextResponse.json(
-        { error: '会社情報が紐づいていません' },
-        { status: 403 }
+        { error: "会社情報が紐づいていません" },
+        { status: 403 },
       );
       applyAuthCookies(res, cookieMutations);
       return res;
@@ -24,17 +46,24 @@ export async function GET(request: NextRequest) {
     const supabase = createSupabaseServiceClient();
 
     const { data: pdfs, error } = await supabase
-      .from('pdfs')
-      .select('id, original_filename, storage_path, size_bytes, created_at, is_deleted')
-      .eq('company_id', companyId)
-      .eq('is_deleted', false)
-      .order('created_at', { ascending: false });
+      .from("pdfs")
+      .select(
+        "id, original_filename, storage_path, size_bytes, created_at, is_deleted",
+      )
+      .eq("company_id", companyId)
+      .eq("is_deleted", false)
+      .order("created_at", { ascending: false });
 
     if (error) {
-      console.error('DB error:', error);
+      console.error("[GET /api/pdf/list] DB Fetch Error", {
+        companyId,
+        email: account?.email,
+        accountId: account?.id,
+        error,
+      });
       const res = NextResponse.json(
-        { error: 'PDF一覧の取得に失敗しました' },
-        { status: 500 }
+        { error: "PDF一覧の取得に失敗しました" },
+        { status: 500 },
       );
       applyAuthCookies(res, cookieMutations);
       return res;
@@ -47,7 +76,7 @@ export async function GET(request: NextRequest) {
     }
 
     const paths = pdfs
-      .map((p) => String(p.storage_path ?? '').trim())
+      .map((p) => String(p.storage_path ?? "").trim())
       .filter((p) => p.length > 0);
 
     if (paths.length === 0) {
@@ -61,10 +90,17 @@ export async function GET(request: NextRequest) {
       .createSignedUrls(paths, 3600);
 
     if (signedError) {
-      console.error('Signed URL error:', signedError);
+      console.error("[GET /api/pdf/list] Signed URL Generation Error", {
+        companyId,
+        email: account?.email,
+        accountId: account?.id,
+        bucketName,
+        pathsCount: paths.length,
+        error: signedError,
+      });
       const res = NextResponse.json(
-        { error: 'PDF一覧の取得に失敗しました' },
-        { status: 500 }
+        { error: "PDF一覧の取得に失敗しました" },
+        { status: 500 },
       );
       applyAuthCookies(res, cookieMutations);
       return res;
@@ -72,7 +108,8 @@ export async function GET(request: NextRequest) {
 
     const signedMap = new Map<string, string>();
     signed?.forEach((item) => {
-      if (item?.path && item?.signedUrl) signedMap.set(item.path, item.signedUrl);
+      if (item?.path && item?.signedUrl)
+        signedMap.set(item.path, item.signedUrl);
     });
 
     const result = (pdfs ?? []).map((p) => ({
@@ -88,14 +125,16 @@ export async function GET(request: NextRequest) {
     applyAuthCookies(res, cookieMutations);
     return res;
   } catch (err) {
-    console.error('Unexpected error:', err);
-    return NextResponse.json({ error: '予期しないエラーが発生しました' }, { status: 500 });
+    console.error("[GET /api/pdf/list] Unexpected Error", {
+      companyId,
+      email: account?.email,
+      accountId: account?.id,
+      error: err instanceof Error ? err.message : String(err),
+      errorStack: err instanceof Error ? err.stack : undefined,
+    });
+    return NextResponse.json(
+      { error: "予期しないエラーが発生しました" },
+      { status: 500 },
+    );
   }
 }
-
-
-
-
-
-
-
