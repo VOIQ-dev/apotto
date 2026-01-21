@@ -66,9 +66,10 @@ export async function GET(request: NextRequest) {
 
   const url = new URL(request.url);
   const page = Math.max(1, parseInt(url.searchParams.get("page") || "1", 10));
-  const limit = Math.min(
-    100,
-    Math.max(1, parseInt(url.searchParams.get("limit") || "100", 10)),
+  // 上限なし（会社ごとのデータなので無制限で取得可能）
+  const limit = Math.max(
+    1,
+    parseInt(url.searchParams.get("limit") || "100000", 10),
   );
   const offset = (page - 1) * limit;
 
@@ -195,7 +196,7 @@ export async function PATCH(request: NextRequest) {
 
     const supabase = createSupabaseServiceClient();
 
-    const { data, error, count } = await supabase
+    const { error, count } = await supabase
       .from("lead_lists")
       .update({ send_status: sendStatus }, { count: "exact" })
       .eq("company_id", companyId)

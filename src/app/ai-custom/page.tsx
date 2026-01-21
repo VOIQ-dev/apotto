@@ -431,8 +431,6 @@ export default function AiCustomPage() {
   const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(
     new Set(),
   );
-  const [leadsPage, setLeadsPage] = useState(1);
-  const [leadsTotalPages, setLeadsTotalPages] = useState(1);
   const gridApiRef = useRef<GridApi | null>(null);
 
   // トースト表示（3秒後に自動消去）
@@ -532,49 +530,44 @@ export default function AiCustomPage() {
   );
 
   // リード一覧取得
-  const fetchLeads = useCallback(
-    async (page = 1) => {
-      setLeadsLoading(true);
-      try {
-        const res = await fetch(`/api/leads?page=${page}&limit=100`);
-        if (!res.ok) throw new Error("リードの取得に失敗しました");
-        const data = await res.json();
-        const fetchedLeads: LeadRow[] = (data.leads || []).map(
-          (l: Record<string, unknown>) => ({
-            id: String(l.id),
-            companyName: String(l.company_name ?? ""),
-            homepageUrl: String(l.homepage_url ?? ""),
-            sendStatus: l.send_status as
-              | "pending"
-              | "success"
-              | "failed"
-              | "blocked",
-            intentScore: l.intentScore as number | null,
-            isAppointed: Boolean(l.is_appointed),
-            isNg: Boolean(l.is_ng),
-            contactName: String(l.contact_name ?? ""),
-            department: String(l.department ?? ""),
-            title: String(l.title ?? ""),
-            email: String(l.email ?? ""),
-            importFileName: String(l.import_file_name ?? ""),
-          }),
-        );
-        setLeads(fetchedLeads);
-        setLeadsPage(data.page || 1);
-        setLeadsTotalPages(data.totalPages || 1);
-      } catch (err) {
-        console.error("[fetchLeads]", err);
-        showToast("リードの取得に失敗しました", "error");
-      } finally {
-        setLeadsLoading(false);
-      }
-    },
-    [showToast],
-  );
+  const fetchLeads = useCallback(async () => {
+    setLeadsLoading(true);
+    try {
+      const res = await fetch(`/api/leads?page=1&limit=100000`);
+      if (!res.ok) throw new Error("リードの取得に失敗しました");
+      const data = await res.json();
+      const fetchedLeads: LeadRow[] = (data.leads || []).map(
+        (l: Record<string, unknown>) => ({
+          id: String(l.id),
+          companyName: String(l.company_name ?? ""),
+          homepageUrl: String(l.homepage_url ?? ""),
+          sendStatus: l.send_status as
+            | "pending"
+            | "success"
+            | "failed"
+            | "blocked",
+          intentScore: l.intentScore as number | null,
+          isAppointed: Boolean(l.is_appointed),
+          isNg: Boolean(l.is_ng),
+          contactName: String(l.contact_name ?? ""),
+          department: String(l.department ?? ""),
+          title: String(l.title ?? ""),
+          email: String(l.email ?? ""),
+          importFileName: String(l.import_file_name ?? ""),
+        }),
+      );
+      setLeads(fetchedLeads);
+    } catch (err) {
+      console.error("[fetchLeads]", err);
+      showToast("リードの取得に失敗しました", "error");
+    } finally {
+      setLeadsLoading(false);
+    }
+  }, [showToast]);
 
   // 初回リード読み込み
   useEffect(() => {
-    void fetchLeads(1);
+    void fetchLeads();
   }, [fetchLeads]);
 
   const fetchPdfLibrary = useCallback(async () => {
@@ -778,10 +771,10 @@ export default function AiCustomPage() {
         if (!res.ok) throw new Error("更新失敗");
       } catch {
         showToast("更新に失敗しました", "error");
-        void fetchLeads(leadsPage);
+        void fetchLeads();
       }
     },
-    [fetchLeads, leadsPage, showToast],
+    [fetchLeads, showToast],
   );
 
   // リードCSVエクスポート（全データ出力）
@@ -1513,7 +1506,7 @@ export default function AiCustomPage() {
         setLastSendFinishedAt(new Date().toISOString());
         // 送信結果を反映するためリード表を再読み込み
         pushLog("📋 送信結果をリード表に反映中...");
-        await fetchLeads(leadsPage);
+        await fetchLeads();
         pushLog("✅ リード表更新完了");
       } catch (err) {
         pushLog(`送信処理でエラーが発生しました: ${err}`);
@@ -1527,7 +1520,6 @@ export default function AiCustomPage() {
       resetSendResults,
       sendableReadyCards,
       fetchLeads,
-      leadsPage,
     ],
   );
 
@@ -1713,7 +1705,7 @@ export default function AiCustomPage() {
         }));
         // 送信結果を反映するためリード表を再読み込み
         pushLog("📋 送信結果をリード表に反映中...");
-        await fetchLeads(leadsPage);
+        await fetchLeads();
         pushLog("✅ リード表更新完了");
       } catch (error) {
         setAutoRunStatus("error");
@@ -1734,7 +1726,6 @@ export default function AiCustomPage() {
       handleBatchSend,
       handleGenerateEntry,
       fetchLeads,
-      leadsPage,
       pushLog,
       resetSendResults,
     ],
@@ -1854,7 +1845,7 @@ export default function AiCustomPage() {
         );
 
         // リード一覧を再取得
-        await fetchLeads(1);
+        await fetchLeads();
       } catch (error) {
         const message =
           error instanceof Error
@@ -2031,7 +2022,7 @@ export default function AiCustomPage() {
       await Promise.all(deletePromises);
       showToast(`${selectedLeadIds.size}件のリードを削除しました`, "success");
       setSelectedLeadIds(new Set());
-      await fetchLeads(leadsPage);
+      await fetchLeads();
     } catch (error) {
       console.error("Delete error:", error);
       showToast("削除に失敗しました", "error");
@@ -2039,7 +2030,7 @@ export default function AiCustomPage() {
       setIsDeleting(false);
       setIsDeleteModalOpen(false);
     }
-  }, [selectedLeadIds, showToast, fetchLeads, leadsPage]);
+  }, [selectedLeadIds, showToast, fetchLeads]);
 
   const handleFileInputChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
@@ -2711,7 +2702,7 @@ export default function AiCustomPage() {
               <Tooltip label="再読み込み" position="top" withArrow>
                 <button
                   type="button"
-                  onClick={() => void fetchLeads(leadsPage)}
+                  onClick={() => void fetchLeads()}
                   className="btn-secondary text-xs p-2"
                   disabled={leadsLoading}
                   aria-label="再読み込み"
@@ -2743,6 +2734,7 @@ export default function AiCustomPage() {
               animateRows={true}
               pagination={true}
               paginationPageSize={100}
+              paginationPageSizeSelector={false}
               onGridReady={onGridReady}
               onSelectionChanged={onSelectionChanged}
               onCellValueChanged={onCellValueChanged}
@@ -2752,38 +2744,13 @@ export default function AiCustomPage() {
           </div>
 
           <div className="mt-4 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3 shrink-0">
-              <span className="text-xs text-muted-foreground whitespace-nowrap">
-                選択:{" "}
-                <span className="font-bold text-primary">
-                  {selectedLeadIds.size}
-                </span>
-                件 / 全{leads.length}件
+            <span className="text-xs text-muted-foreground whitespace-nowrap">
+              選択:{" "}
+              <span className="font-bold text-primary">
+                {selectedLeadIds.size}
               </span>
-              {leadsTotalPages > 1 && (
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => void fetchLeads(leadsPage - 1)}
-                    disabled={leadsPage <= 1 || leadsLoading}
-                    className="btn-secondary text-xs px-1.5 py-0.5"
-                  >
-                    ◀
-                  </button>
-                  <span className="text-xs text-muted-foreground whitespace-nowrap">
-                    {leadsPage}/{leadsTotalPages}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => void fetchLeads(leadsPage + 1)}
-                    disabled={leadsPage >= leadsTotalPages || leadsLoading}
-                    className="btn-secondary text-xs px-1.5 py-0.5"
-                  >
-                    ▶
-                  </button>
-                </div>
-              )}
-            </div>
+              件 / 全{leads.length}件
+            </span>
 
             <div className="flex items-center gap-2">
               <button
@@ -2813,9 +2780,7 @@ export default function AiCustomPage() {
                 disabled={isSending || sendableReadyCards.length === 0}
                 className="btn-secondary whitespace-nowrap text-xs px-3 py-1.5"
               >
-                {isSending
-                  ? "送信中..."
-                  : `選択中のカードを送信（${sendableReadyCards.length}件）`}
+                {isSending ? "送信中..." : `送信(${sendableReadyCards.length})`}
               </button>
 
               <button
