@@ -17,13 +17,48 @@ app.use(
 );
 
 // ペイロードサイズ制限を50MBに拡張（100件バッチ処理対応）
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ limit: "50mb", extended: true }));
+app.use(express.json({ limit: "500mb" }));
+app.use(express.urlencoded({ limit: "500mb", extended: true }));
 
 // ヘルスチェック
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
+
+// キューステータス確認エンドポイント
+app.get("/queue-status", (_req, res) => {
+  res.json({
+    queueLength: sendQueue.length,
+    activeBrowsers: currentBrowserCount,
+    maxBrowsers: MAX_CONCURRENT_BROWSERS,
+    availableSlots: MAX_CONCURRENT_BROWSERS - currentBrowserCount,
+    queueItems: sendQueue.map(item => ({
+      companyId: item.companyId,
+      itemCount: item.items.length,
+      waitingSeconds: Math.floor((Date.now() - item.addedAt.getTime()) / 1000),
+    })),
+  });
+});
+
+// ===== 同時実行制御のための変数 =====
+// 10社まで同時処理可能（32GBメモリで余裕あり、各社は内部で直列処理）
+const MAX_CONCURRENT_BROWSERS = 10;
+let currentBrowserCount = 0; // 現在実行中のブラウザ数
+
+console.log(`[server] Starting with MAX_CONCURRENT_BROWSERS=${MAX_CONCURRENT_BROWSERS} (10 companies can process simultaneously)`);
+
+// 送信キュー（待機中のリクエストを管理）
+interface QueueItem {
+  req: express.Request;
+  res: express.Response;
+  items: Payload[];
+  debug: boolean;
+  companyId?: string; // 企業識別用（ログ用）
+  addedAt: Date;
+}
+
+const sendQueue: QueueItem[] = [];
+let isProcessingQueue = false;
 
 // 型定義
 type Payload = {
@@ -90,65 +125,110 @@ app.post("/auto-submit", async (req, res) => {
   }
 });
 
-// バッチ送信エンドポイント（複数URL連続処理、SSEでストリーミング）
-app.post("/auto-submit/batch", async (req, res) => {
-  const { items, debug } = req.body as { items: Payload[]; debug?: boolean };
+// キュー処理関数
+async function processQueue() {
+  if (isProcessingQueue || sendQueue.length === 0) return;
 
-  if (!items || !Array.isArray(items) || items.length === 0) {
-    return res.status(400).json({
-      error: "items array is required",
-    });
+  // 同時実行数チェック
+  if (currentBrowserCount >= MAX_CONCURRENT_BROWSERS) {
+    console.log(`[queue] Maximum browsers (${MAX_CONCURRENT_BROWSERS}) reached, waiting...`);
+    return;
   }
 
-  // SSE設定
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-  res.flushHeaders();
-
-  let browser: Browser | null = null;
+  isProcessingQueue = true;
 
   try {
-    // 1つのブラウザインスタンスを起動
-    browser = await chromium.launch({
-      headless: !debug,
-      slowMo: debug ? 200 : 0,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-gpu",
-      ],
-    });
+    while (sendQueue.length > 0 && currentBrowserCount < MAX_CONCURRENT_BROWSERS) {
+      const queueItem = sendQueue.shift();
+      if (!queueItem) break;
 
-    res.write(`data: ${JSON.stringify({ type: "browser_ready" })}\n\n`);
+      currentBrowserCount++;
+      const waitTime = Math.floor((Date.now() - queueItem.addedAt.getTime()) / 1000);
+      console.log(`[queue] Processing request (waited ${waitTime}s). Active browsers: ${currentBrowserCount}/${MAX_CONCURRENT_BROWSERS}`);
 
-    // 各アイテムを順次処理
+      // 非同期でバッチ処理を実行（並列処理）
+      executeBatch(queueItem)
+        .finally(() => {
+          currentBrowserCount--;
+          console.log(`[queue] Request completed. Active browsers: ${currentBrowserCount}/${MAX_CONCURRENT_BROWSERS}`);
+          // 次のキューアイテムを処理
+          setTimeout(() => processQueue(), 100);
+        });
+    }
+  } finally {
+    isProcessingQueue = false;
+  }
+}
+
+// 実際のバッチ処理実行（完全直列処理：1アイテム = 1ブラウザライフサイクル）
+async function executeBatch(queueItem: QueueItem) {
+  const { res, items, debug, companyId } = queueItem;
+
+  try {
+    console.log(`[executeBatch] Starting batch for company ${companyId}: ${items.length} items`);
+    res.write(`data: ${JSON.stringify({ type: "batch_start", queuePosition: 0 })}\n\n`);
+
+    // 各アイテムを順次処理（1アイテムごとに新しいブラウザを起動・処理・クローズ）
     for (let i = 0; i < items.length; i++) {
       const payload = items[i];
-      const itemId = payload.url;
-
-      // 処理開始を通知
-      res.write(
-        `data: ${JSON.stringify({
-          type: "item_start",
-          index: i,
-          url: payload.url,
-        })}\n\n`,
-      );
+      let browser: Browser | null = null;
 
       try {
+        // 処理開始を通知
+        res.write(
+          `data: ${JSON.stringify({
+            type: "item_start",
+            index: i,
+            url: payload.url,
+          })}\n\n`,
+        );
+
+        // 各アイテムごとに新しいブラウザを起動（メモリ完全リセット）
+        console.log(
+          `[auto-submit/batch] [${i + 1}/${items.length}] Launching fresh browser for ${payload.url}`,
+        );
+        browser = await chromium.launch({
+          headless: !debug,
+          slowMo: debug ? 200 : 0,
+          args: [
+            // セキュリティ関連
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+
+            // メモリ最適化（重要）
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--disable-gl-drawing-for-tests", // 大きな効果
+            "--disable-accelerated-2d-canvas",
+
+            // バックグラウンド処理の無効化
+            "--disable-background-timer-throttling",
+            "--disable-backgrounding-occluded-windows",
+            "--disable-renderer-backgrounding",
+
+            // 不要な機能の無効化
+            "--disable-extensions",
+            "--disable-plugins",
+            "--memory-pressure-off",
+          ],
+        });
+
+        if (i === 0) {
+          res.write(`data: ${JSON.stringify({ type: "browser_ready" })}\n\n`);
+        }
+
+        // フォーム送信処理
         const result = await autoSubmitWithBrowser(browser, payload);
 
-        // ローカルログ出力
+        // 詳細ログ出力
         console.log(
-          `[auto-submit/batch] ${i + 1}/${items.length} ${payload.url} - success=${result.success}`,
+          `[auto-submit/batch] [${i + 1}/${items.length}] ${payload.url} - success=${result.success}`,
         );
         if (!result.success) {
           console.log(
-            `[auto-submit/batch] Failure reason: ${result.note || "Unknown"}`,
+            `[auto-submit/batch] [${i + 1}/${items.length}] Failure reason: ${result.note || "Unknown"}`,
           );
-          console.log(`[auto-submit/batch] Logs:\n${result.logs.join("\n")}`);
+          console.log(`[auto-submit/batch] [${i + 1}/${items.length}] Error logs:\n${result.logs.slice(-5).join("\n")}`);
         }
 
         // 処理完了を通知
@@ -165,6 +245,17 @@ app.post("/auto-submit/batch", async (req, res) => {
         );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        const stack = error instanceof Error ? error.stack : undefined;
+
+        console.error(
+          `[auto-submit/batch] [${i + 1}/${items.length}] Error: ${message}`,
+        );
+        if (stack) {
+          console.error(
+            `[auto-submit/batch] [${i + 1}/${items.length}] Stack trace: ${stack.split("\n").slice(0, 3).join(" | ")}`,
+          );
+        }
+
         res.write(
           `data: ${JSON.stringify({
             type: "item_error",
@@ -173,28 +264,88 @@ app.post("/auto-submit/batch", async (req, res) => {
             error: message,
           })}\n\n`,
         );
-        console.error(
-          `[auto-submit/batch] Error ${i + 1}/${items.length}: ${message}`,
-        );
+      } finally {
+        // ブラウザを確実にクローズ（メモリリーク防止）
+        if (browser) {
+          await browser.close().catch((err) => {
+            console.error(
+              `[auto-submit/batch] [${i + 1}/${items.length}] Failed to close browser: ${err}`,
+            );
+          });
+          console.log(
+            `[auto-submit/batch] [${i + 1}/${items.length}] Browser closed successfully`,
+          );
+        }
       }
     }
 
     // 全完了を通知
+    console.log(`[executeBatch] Batch completed for company ${companyId}: ${items.length} items processed`);
     res.write(
       `data: ${JSON.stringify({ type: "batch_complete", total: items.length })}\n\n`,
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`[auto-submit/batch] Fatal error: ${message}`);
+    console.error(`[executeBatch] Fatal error for company ${companyId}: ${message}`);
     res.write(
       `data: ${JSON.stringify({ type: "fatal_error", error: message })}\n\n`,
     );
   } finally {
-    if (browser) {
-      await browser.close();
-    }
     res.end();
   }
+}
+
+// 新しいバッチ送信エンドポイント（キューイング対応）
+app.post("/auto-submit/batch", async (req, res) => {
+  const { items, debug } = req.body as { items: Payload[]; debug?: boolean };
+
+  if (!items || !Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({
+      error: "items array is required",
+    });
+  }
+
+  // リクエスト元の企業識別（IPアドレスやヘッダーから取得可能）
+  const companyId = req.headers["x-company-id"] as string ||
+                    req.ip ||
+                    `company_${Date.now()}`;
+
+  // 現在のキューサイズ確認
+  const queueLength = sendQueue.length;
+  const estimatedWaitTime = Math.ceil((queueLength * 50) / MAX_CONCURRENT_BROWSERS); // 大雑把な見積もり
+
+  // キューに追加
+  const queueItem: QueueItem = {
+    req,
+    res,
+    items,
+    debug: debug || false,
+    companyId,
+    addedAt: new Date(),
+  };
+
+  sendQueue.push(queueItem);
+  console.log(`[queue] Request from ${companyId} added. Queue size: ${sendQueue.length}, Estimated wait: ${estimatedWaitTime}s`);
+
+  // SSE設定
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  // キュー情報を送信
+  res.write(
+    `data: ${JSON.stringify({
+      type: "queued",
+      position: queueLength,
+      estimatedWaitTime,
+      activeBrowsers: currentBrowserCount,
+      maxBrowsers: MAX_CONCURRENT_BROWSERS,
+    })}\n\n`,
+  );
+
+  // キュー処理を開始
+  processQueue();
 });
 
 // 既存ブラウザを使ったフォーム送信（バッチ用）
@@ -214,11 +365,12 @@ async function autoSubmitWithBrowser(
   log(`=== autoSubmit START ===`);
   log(`Payload: url=${payload.url}, company=${payload.company}`);
 
+  let context: Awaited<ReturnType<typeof browser.newContext>> | null = null;
   let page: Page | null = null;
 
   try {
-    log(`Creating new page`);
-    const context = await browser.newContext();
+    log(`Creating new context and page`);
+    context = await browser.newContext();
     page = await context.newPage();
     log(`Page created successfully`);
 
@@ -308,16 +460,25 @@ async function autoSubmitWithBrowser(
     const finalUrl = page.url();
     log(`=== autoSubmit END === success=${submitted}, finalUrl=${finalUrl}`);
 
-    // ページを閉じる（ブラウザは維持）
-    await page.close().catch(() => {});
-
     return { success: submitted, logs, finalUrl };
   } catch (error: unknown) {
     const message =
       error instanceof Error ? error.message : String(error ?? "Unknown error");
     log(`UNEXPECTED ERROR: ${message}`);
-    if (page) await page.close().catch(() => {});
     return { success: false, logs, finalUrl: page?.url(), note: message };
+  } finally {
+    // リソースの確実なクリーンアップ（メモリリーク防止）
+    log(`Cleaning up resources (page and context)`);
+    if (page) {
+      await page.close().catch((err) => {
+        log(`Warning: Failed to close page: ${err}`);
+      });
+    }
+    if (context) {
+      await context.close().catch((err) => {
+        log(`Warning: Failed to close context: ${err}`);
+      });
+    }
   }
 }
 
@@ -338,6 +499,7 @@ async function autoSubmit(payload: Payload): Promise<Result> {
   );
 
   let browser: Browser | null = null;
+  let context: Awaited<ReturnType<Browser["newContext"]>> | null = null;
   let page: Page | null = null;
 
   try {
@@ -347,10 +509,25 @@ async function autoSubmit(payload: Payload): Promise<Result> {
         headless: !payload.debug,
         slowMo: payload.debug ? 200 : 0,
         args: [
+          // セキュリティ関連
           "--no-sandbox",
           "--disable-setuid-sandbox",
+
+          // メモリ最適化（重要）
           "--disable-dev-shm-usage",
           "--disable-gpu",
+          "--disable-gl-drawing-for-tests", // 大きな効果
+          "--disable-accelerated-2d-canvas",
+
+          // バックグラウンド処理の無効化
+          "--disable-background-timer-throttling",
+          "--disable-backgrounding-occluded-windows",
+          "--disable-renderer-backgrounding",
+
+          // 不要な機能の無効化
+          "--disable-extensions",
+          "--disable-plugins",
+          "--memory-pressure-off",
         ],
       });
       log(`Step 1: Browser launched successfully`);
@@ -364,7 +541,7 @@ async function autoSubmit(payload: Payload): Promise<Result> {
     }
 
     log(`Step 2: Creating browser context and page`);
-    const context = await browser.newContext();
+    context = await browser.newContext();
     page = await context.newPage();
     log(`Step 2: Page created successfully`);
 
@@ -467,8 +644,23 @@ async function autoSubmit(payload: Payload): Promise<Result> {
     if (stack) log(`Stack: ${stack.split("\n").slice(0, 3).join(" | ")}`);
     return { success: false, logs, finalUrl: page?.url(), note: message };
   } finally {
-    log(`Closing browser`);
-    if (browser) await browser.close();
+    // リソースの確実なクリーンアップ
+    log(`Cleaning up resources`);
+    if (page) {
+      await page.close().catch((err) => {
+        log(`Warning: Failed to close page: ${err}`);
+      });
+    }
+    if (context) {
+      await context.close().catch((err) => {
+        log(`Warning: Failed to close context: ${err}`);
+      });
+    }
+    if (browser) {
+      await browser.close().catch((err) => {
+        log(`Warning: Failed to close browser: ${err}`);
+      });
+    }
   }
 }
 
@@ -590,10 +782,14 @@ async function findAndFillForm(
     "form[action*='contact']",
     "form[action*='inquiry']",
     "form[action*='toiawase']",
+    "form:has(input[type='email'])",
+    "form:has(input[name*='email'])",
     "form:has(input), form:has(textarea)",
   ];
 
   let formFound = null as null | ReturnType<Page["locator"]>;
+
+  // 最初の試行
   for (const fs of formLocators) {
     const loc = page.locator(fs).first();
     if ((await loc.count()) > 0) {
@@ -609,6 +805,46 @@ async function findAndFillForm(
       log("Fallback: using first form on the page");
     }
   }
+
+  // フォームが見つからない場合、動的レンダリングを待機してリトライ
+  if (!formFound) {
+    log("Form not found on initial check, waiting for dynamic rendering...");
+    await page.waitForTimeout(3000);
+
+    for (const fs of formLocators) {
+      const loc = page.locator(fs).first();
+      if ((await loc.count()) > 0) {
+        formFound = loc;
+        log(`Found form after waiting: ${fs}`);
+        break;
+      }
+    }
+    if (!formFound) {
+      const anyForm = page.locator("form").first();
+      if ((await anyForm.count()) > 0) {
+        formFound = anyForm;
+        log("Fallback after waiting: using first form on the page");
+      }
+    }
+
+    // <form>タグがない場合、email入力欄を含むコンテナを探す
+    if (!formFound) {
+      const emailInputContainerSelectors = [
+        "div:has(input[type='email'])",
+        "section:has(input[type='email'])",
+        "div:has(input[name*='email' i])",
+      ];
+      for (const containerSel of emailInputContainerSelectors) {
+        const container = page.locator(containerSel).first();
+        if ((await container.count()) > 0) {
+          formFound = container;
+          log(`Found formless container with email input: ${containerSel}`);
+          break;
+        }
+      }
+    }
+  }
+
   if (!formFound) return false;
 
   // reCAPTCHA / hCaptcha 検出
@@ -1094,7 +1330,7 @@ async function findAndFillForm(
     }
   }
 
-  // チェックボックス：必須または最初のものをチェック（タイムアウト3秒）
+  // チェックボックス：全てチェック（タイムアウト3秒）
   const checkboxes = formFound.locator('input[type="checkbox"]');
   const checkboxCount = await checkboxes.count();
   for (let i = 0; i < checkboxCount; i++) {
@@ -1103,7 +1339,25 @@ async function findAndFillForm(
       const isChecked = await checkbox.isChecked({ timeout: 3000 });
       if (!isChecked) {
         await checkbox.check({ timeout: 3000 });
-        log(`Checked checkbox[${i}]`);
+
+        // ログ用にラベル情報を取得
+        const checkboxId = (await checkbox.getAttribute("id")) || "";
+        const checkboxName = (await checkbox.getAttribute("name")) || "";
+        let labelText = "";
+        if (checkboxId) {
+          const label = formFound.locator(`label[for="${checkboxId}"]`).first();
+          if ((await label.count()) > 0) {
+            labelText = (await label.textContent()) || "";
+          }
+        }
+        if (!labelText) {
+          const parentLabel = checkbox.locator("xpath=ancestor::label").first();
+          if ((await parentLabel.count()) > 0) {
+            labelText = (await parentLabel.textContent()) || "";
+          }
+        }
+
+        log(`Checked checkbox[${i}]: ${labelText.trim() || checkboxName || "unlabeled"}`);
       }
     } catch {
       // チェックできない場合はスキップ
@@ -1132,8 +1386,9 @@ async function findAndFillForm(
   }
 
   // 必須フィールドの最終チェック：未入力の必須フィールドにプレースホルダーベースで値を入力
+  // required属性だけでなく、aria-required="true"も検出
   const requiredInputs = formFound.locator(
-    'input[required]:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="submit"])',
+    'input[required]:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="submit"]), input[aria-required="true"]:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="submit"])',
   );
   const requiredInputCount = await requiredInputs.count();
   for (let i = 0; i < requiredInputCount; i++) {
@@ -1147,8 +1402,18 @@ async function findAndFillForm(
         const placeholder = (await input.getAttribute("placeholder")) || "";
         const ariaLabel = (await input.getAttribute("aria-label")) || "";
         const title = (await input.getAttribute("title")) || "";
+
+        // label要素のテキストも取得
+        let labelText = "";
+        if (inputId) {
+          const label = formFound.locator(`label[for="${inputId}"]`).first();
+          if ((await label.count()) > 0) {
+            labelText = (await label.textContent()) || "";
+          }
+        }
+
         const fieldHint =
-          `${inputName}${inputId}${placeholder}${ariaLabel}${title}`.toLowerCase();
+          `${inputName}${inputId}${placeholder}${ariaLabel}${title}${labelText}`.toLowerCase();
 
         let defaultValue = "";
         // メールアドレス
@@ -1317,8 +1582,10 @@ async function findAndFillForm(
     }
   }
 
-  // 必須テキストエリアのチェック
-  const requiredTextareas = formFound.locator("textarea[required]");
+  // 必須テキストエリアのチェック（required属性とaria-required="true"の両方）
+  const requiredTextareas = formFound.locator(
+    'textarea[required], textarea[aria-required="true"]',
+  );
   const requiredTextareaCount = await requiredTextareas.count();
   for (let i = 0; i < requiredTextareaCount; i++) {
     const textarea = requiredTextareas.nth(i);
@@ -1331,6 +1598,111 @@ async function findAndFillForm(
           { timeout: 2000 },
         );
         log(`Filled required textarea with default message`);
+      }
+    } catch {
+      // 入力できない場合はスキップ
+    }
+  }
+
+  // 必須マーク（*、必須など）が付いているフィールドも検出して入力
+  const allInputsForRequiredCheck = formFound.locator(
+    'input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="submit"]):not([type="button"])',
+  );
+  const allInputsForRequiredCheckCount = await allInputsForRequiredCheck.count();
+  for (let i = 0; i < allInputsForRequiredCheckCount; i++) {
+    const input = allInputsForRequiredCheck.nth(i);
+    try {
+      const currentValue = await input.inputValue({ timeout: 1000 });
+      if (currentValue && currentValue.trim() !== "") continue;
+
+      const inputId = (await input.getAttribute("id")) || "";
+      let labelText = "";
+      if (inputId) {
+        const label = formFound.locator(`label[for="${inputId}"]`).first();
+        if ((await label.count()) > 0) {
+          labelText = (await label.textContent()) || "";
+        }
+      }
+
+      // ラベルに「*」「必須」「※」などが含まれている場合は必須と判定
+      const isLikelyRequired =
+        labelText.includes("*") ||
+        labelText.includes("必須") ||
+        labelText.includes("※") ||
+        labelText.includes("required");
+
+      if (!isLikelyRequired) continue;
+
+      // 必須と判定されたフィールドにデフォルト値を入力
+      const inputName = (await input.getAttribute("name")) || "";
+      const inputType = (await input.getAttribute("type")) || "text";
+      const placeholder = (await input.getAttribute("placeholder")) || "";
+      const ariaLabel = (await input.getAttribute("aria-label")) || "";
+      const title = (await input.getAttribute("title")) || "";
+      const fieldHint =
+        `${inputName}${inputId}${placeholder}${ariaLabel}${title}${labelText}`.toLowerCase();
+
+      let defaultValue = "";
+      if (
+        inputType === "email" ||
+        fieldHint.includes("mail") ||
+        fieldHint.includes("メール")
+      ) {
+        defaultValue = payload.email || "test@example.com";
+      } else if (
+        inputType === "tel" ||
+        fieldHint.includes("tel") ||
+        fieldHint.includes("phone") ||
+        fieldHint.includes("電話")
+      ) {
+        defaultValue = payload.phone || "03-1234-5678";
+      } else if (
+        fieldHint.includes("company") ||
+        fieldHint.includes("会社") ||
+        fieldHint.includes("企業")
+      ) {
+        defaultValue = payload.company || "テスト株式会社";
+      } else if (
+        fieldHint.includes("name") ||
+        fieldHint.includes("氏名") ||
+        fieldHint.includes("名前")
+      ) {
+        defaultValue = payload.name || "山田 太郎";
+      } else if (
+        fieldHint.includes("姓") &&
+        !fieldHint.includes("ふりがな") &&
+        !fieldHint.includes("カナ")
+      ) {
+        defaultValue = payload.lastName || "山田";
+      } else if (
+        fieldHint.includes("名") &&
+        !fieldHint.includes("姓") &&
+        !fieldHint.includes("氏") &&
+        !fieldHint.includes("ふりがな") &&
+        !fieldHint.includes("カナ")
+      ) {
+        defaultValue = payload.firstName || "太郎";
+      } else if (
+        fieldHint.includes("kana") ||
+        fieldHint.includes("ふりがな") ||
+        fieldHint.includes("フリガナ")
+      ) {
+        defaultValue = payload.fullNameKana || "やまだ たろう";
+      } else if (
+        fieldHint.includes("subject") ||
+        fieldHint.includes("件名") ||
+        fieldHint.includes("タイトル")
+      ) {
+        defaultValue = "お問い合わせ";
+      } else {
+        defaultValue = "テスト";
+      }
+
+      if (defaultValue) {
+        await input.fill(defaultValue, { timeout: 1000 });
+        log(
+          `Filled required-marked field [${labelText.trim() || inputName || inputId}] with: ${defaultValue}`,
+        );
       }
     } catch {
       // 入力できない場合はスキップ
@@ -1353,7 +1725,18 @@ async function findAndFillForm(
       const ariaLabel = (await input.getAttribute("aria-label")) || "";
       const title = (await input.getAttribute("title")) || "";
       const hint = placeholder || ariaLabel || title;
-      if (!hint) continue; // ヒントがなければスキップ
+
+      // ヒントがない場合でも、必須フィールドなら「テスト」を入力
+      if (!hint) {
+        const isRequired =
+          (await input.getAttribute("required")) !== null ||
+          (await input.getAttribute("aria-required")) === "true";
+        if (isRequired) {
+          await input.fill("テスト", { timeout: 1000 });
+          log(`Filled required field without hint with: テスト`);
+        }
+        continue;
+      }
 
       const hintLower = hint.toLowerCase();
       let valueToFill = "";
@@ -1459,6 +1842,14 @@ async function findAndFillForm(
         hintLower.includes("building")
       ) {
         valueToFill = payload.building || "";
+      } else {
+        // 既知パターンに合わないが、必須フィールドの場合はデフォルト値を入力
+        const isRequired =
+          (await input.getAttribute("required")) !== null ||
+          (await input.getAttribute("aria-required")) === "true";
+        if (isRequired) {
+          valueToFill = "テスト";
+        }
       }
 
       if (valueToFill) {
@@ -1470,8 +1861,10 @@ async function findAndFillForm(
     }
   }
 
-  // 必須セレクトのチェック
-  const requiredSelects = formFound.locator("select[required]");
+  // 必須セレクトのチェック（required属性とaria-required="true"の両方）
+  const requiredSelects = formFound.locator(
+    'select[required], select[aria-required="true"]',
+  );
   const requiredSelectCount = await requiredSelects.count();
   for (let i = 0; i < requiredSelectCount; i++) {
     const select = requiredSelects.nth(i);
@@ -1505,18 +1898,68 @@ async function submitForm(
   dialogState: { detected: boolean; message: string },
 ): Promise<boolean> {
   const buttonSelectors = [
-    "form button[type='submit']",
-    "form input[type='submit']",
-    "button:has-text('送信')",
-    "button:has-text('確認')",
-    "button:has-text('Submit')",
+    // type="submit" ボタン（最優先）
+    "button[type='submit']",
     "input[type='submit']",
+
+    // テキストベース（日本語）
+    "button:has-text('送信する')",
+    "button:has-text('送信')",
+    "button:has-text('送る')",
+    "button:has-text('確認画面へ')",
+    "button:has-text('確認する')",
+    "button:has-text('確認')",
+    "button:has-text('進む')",
+    "button:has-text('次へ')",
+    "input[value*='送信']",
+    "input[value*='確認']",
+    "input[value*='進む']",
+
+    // テキストベース（英語）
+    "button:has-text('Submit')",
+    "button:has-text('Send')",
+    "button:has-text('Confirm')",
+
+    // type="button" でJavaScript送信するパターン
+    "input[type='button'][value*='送信']",
+    "input[type='button'][value*='確認']",
+    "input[type='button'][onclick*='submit']",
+    "button[onclick*='submit']",
+
+    // クラス名ベース（一般的なパターン）
+    ".wpcf7-form-control.wpcf7-submit",
+    ".wpcf7-form-button",
+    "button.hs-button",
+    "input.hs-button",
+    "button.submit-button",
+    "button.btn-submit",
+    ".submit-btn",
+    "input.submit",
+    "input.p-form__btn",
+    ".p-form__btn",
+
+    // 親要素内のボタン
+    ".btnArea button",
+    ".button-area button",
+    "p button[type='submit']",
+    "div button[type='submit']",
   ];
 
   for (const sel of buttonSelectors) {
     const btn = page.locator(sel).first();
     if ((await btn.count()) > 0) {
       try {
+        // disabled属性を一時的に削除してクリックを試みる
+        const isDisabled = await btn.isDisabled().catch(() => false);
+        if (isDisabled) {
+          log(`Button is disabled, attempting to enable: ${sel}`);
+          await btn.evaluate((el) => {
+            if (el instanceof HTMLInputElement || el instanceof HTMLButtonElement) {
+              el.disabled = false;
+            }
+          }).catch(() => {});
+        }
+
         const urlBefore = page.url();
         log(`Current URL before submit: ${urlBefore}`);
 
@@ -1533,10 +1976,26 @@ async function submitForm(
         await page.waitForTimeout(500);
 
         // 確認画面の判定（最終送信ボタンがあるか）
-        const finalBtn = page
-          .locator("button:has-text('送信'), input[type='submit']")
-          .first();
-        if ((await finalBtn.count()) > 0) {
+        const confirmationSelectors = [
+          "button:has-text('送信')",
+          "button:has-text('送る')",
+          "input[type='submit'][value*='送信']",
+          "input[type='button'][value*='送信']",
+          ".wpcf7-form-button",
+          "input.hs-button",
+          "button.hs-button",
+        ];
+
+        let finalBtn = null;
+        for (const confirmSel of confirmationSelectors) {
+          const candidate = page.locator(confirmSel).first();
+          if ((await candidate.count()) > 0) {
+            finalBtn = candidate;
+            break;
+          }
+        }
+
+        if (finalBtn) {
           log("Confirmation page detected, clicking final submit");
           const urlBeforeFinal = page.url();
 
