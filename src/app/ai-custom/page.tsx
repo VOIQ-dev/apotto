@@ -21,6 +21,7 @@ import type {
   SelectionChangedEvent,
   CellValueChangedEvent,
   IDoesFilterPassParams,
+  PaginationChangedEvent,
 } from "ag-grid-community";
 import {
   AllCommunityModule,
@@ -132,6 +133,7 @@ type AiUploadState = {
   skippedCount: number;
   error?: string;
   lastImportedAt?: number;
+  isImporting?: boolean;
 };
 
 type QueueState = {
@@ -742,6 +744,13 @@ export default function AiCustomPage() {
       selectedNodes.map((node) => node.data?.id as string).filter(Boolean),
     );
     setSelectedLeadIds(ids);
+  }, []);
+
+  const onPaginationChanged = useCallback(() => {
+    // ページ移動時に選択を解除
+    if (gridApiRef.current) {
+      gridApiRef.current.deselectAll();
+    }
   }, []);
 
   const onCellValueChanged = useCallback(
@@ -1643,10 +1652,7 @@ export default function AiCustomPage() {
               ]);
             } else {
               readyQueue.push(readyCard);
-              // キューに3件以上溜まったら送信処理を開始
-              if (readyQueue.length >= 3 && !isSendingBatch) {
-                processSendQueue();
-              }
+              // 全生成完了後に一括送信するため、ここでは送信しない
             }
           } catch (error) {
             pushLog(
@@ -1660,13 +1666,6 @@ export default function AiCustomPage() {
           }
         });
 
-        // 定期的にキューをチェックして送信
-        const queueCheckInterval = setInterval(() => {
-          if (readyQueue.length > 0 && !isSendingBatch) {
-            processSendQueue();
-          }
-        }, 3000); // 3秒ごとにチェック
-
         // すべてのAI生成タスクを並行実行（最大3つ同時）
         const concurrencyLimit = 3;
         for (let i = 0; i < generateTasks.length; i += concurrencyLimit) {
@@ -1675,17 +1674,12 @@ export default function AiCustomPage() {
         }
 
         generationComplete = true;
-        clearInterval(queueCheckInterval);
 
-        // 残りのキューを送信
-        while (readyQueue.length > 0) {
-          await processSendQueue();
-          if (readyQueue.length > 0) {
-            await new Promise((resolve) => setTimeout(resolve, 500));
-          }
-        }
+        // 全文言生成完了後、全アイテムを1回のバッチで送信
+        pushLog(`📤 全文言生成完了。一括送信を開始します（${readyQueue.length}件）`);
+        await processSendQueue();
 
-        // 送信中の処理が完了するまで待機
+        // 送信処理が完了するまで待機
         while (isSendingBatch) {
           await new Promise((resolve) => setTimeout(resolve, 500));
         }
@@ -1737,6 +1731,7 @@ export default function AiCustomPage() {
         ...prev,
         fileName: file.name,
         error: undefined,
+        isImporting: true,
       }));
 
       try {
@@ -1838,6 +1833,7 @@ export default function AiCustomPage() {
           importedCount: importData.imported || 0,
           skippedCount: skippedMissingRequired + (importData.duplicates || 0),
           lastImportedAt: Date.now(),
+          isImporting: false,
         });
 
         pushLog(
@@ -1854,6 +1850,7 @@ export default function AiCustomPage() {
         setUploadState((prev) => ({
           ...prev,
           error: message,
+          isImporting: false,
         }));
         showToast(
           message.split("\n")[0] || "CSV読み込みに失敗しました",
@@ -2591,13 +2588,15 @@ export default function AiCustomPage() {
             </div>
 
             <label
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-              className={`dropzone group relative flex flex-col cursor-pointer items-center justify-center gap-3 rounded-2xl border-2 border-dashed px-4 py-8 transition-colors ${
-                isDragging
-                  ? "border-primary bg-primary/5 is-active"
-                  : "border-border hover:border-primary/50 hover:bg-primary/5"
+              onDragOver={uploadState.isImporting ? undefined : handleDragOver}
+              onDragLeave={uploadState.isImporting ? undefined : handleDragLeave}
+              onDrop={uploadState.isImporting ? undefined : handleDrop}
+              className={`dropzone group relative flex flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed px-4 py-8 transition-colors ${
+                uploadState.isImporting
+                  ? "border-border bg-muted/30 cursor-not-allowed opacity-60"
+                  : isDragging
+                    ? "border-primary bg-primary/5 is-active cursor-pointer"
+                    : "border-border hover:border-primary/50 hover:bg-primary/5 cursor-pointer"
               }`}
             >
               <input
@@ -2605,39 +2604,79 @@ export default function AiCustomPage() {
                 accept=".xlsx,.xls,.csv"
                 onChange={handleFileInputChange}
                 className="sr-only"
+                disabled={uploadState.isImporting}
               />
-              <div
-                className={`flex h-12 w-12 items-center justify-center rounded-full mb-2 transition-colors ${
-                  isDragging
-                    ? "bg-primary/20 text-primary"
-                    : "bg-muted text-muted-foreground group-hover:bg-primary/20 group-hover:text-primary"
-                }`}
-              >
-                <svg
-                  className="h-6 w-6"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  strokeWidth={2}
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
-                  />
-                </svg>
-              </div>
-              <div className="text-center">
-                <p className="text-base font-semibold text-foreground">
-                  ファイルをここにドラッグ＆ドロップ
-                </p>
-                <p className="text-sm text-muted-foreground mt-1">
-                  またはクリックしてファイルを選択
-                </p>
-                <p className="text-xs text-muted-foreground/70 mt-2">
-                  (.xlsx / .xls / .csv)
-                </p>
-              </div>
+
+              {uploadState.isImporting ? (
+                // インポート中：スピナー表示
+                <>
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full mb-2 bg-primary/20 text-primary">
+                    <svg
+                      className="h-6 w-6 animate-spin"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                    >
+                      <circle
+                        className="opacity-25"
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="currentColor"
+                        strokeWidth="4"
+                      />
+                      <path
+                        className="opacity-75"
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                      />
+                    </svg>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-base font-semibold text-foreground">
+                      インポート中...
+                    </p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      しばらくお待ちください
+                    </p>
+                  </div>
+                </>
+              ) : (
+                // 通常時：アップロードUI
+                <>
+                  <div
+                    className={`flex h-12 w-12 items-center justify-center rounded-full mb-2 transition-colors ${
+                      isDragging
+                        ? "bg-primary/20 text-primary"
+                        : "bg-muted text-muted-foreground group-hover:bg-primary/20 group-hover:text-primary"
+                    }`}
+                  >
+                    <svg
+                      className="h-6 w-6"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+                      />
+                    </svg>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-base font-semibold text-foreground">
+                      ファイルをここにドラッグ＆ドロップ
+                    </p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      またはクリックしてファイルを選択
+                    </p>
+                    <p className="text-xs text-muted-foreground/70 mt-2">
+                      (.xlsx / .xls / .csv)
+                    </p>
+                  </div>
+                </>
+              )}
             </label>
 
             <p className="text-xs text-muted-foreground mt-3 text-center">
@@ -2730,6 +2769,7 @@ export default function AiCustomPage() {
                 checkboxes: true,
                 headerCheckbox: true,
                 enableClickSelection: false,
+                selectAll: 'currentPage', // 現在のページのみ選択
               }}
               animateRows={true}
               pagination={true}
@@ -2737,6 +2777,7 @@ export default function AiCustomPage() {
               paginationPageSizeSelector={false}
               onGridReady={onGridReady}
               onSelectionChanged={onSelectionChanged}
+              onPaginationChanged={onPaginationChanged}
               onCellValueChanged={onCellValueChanged}
               getRowId={(params) => params.data.id}
               overlayNoRowsTemplate="リードがありません。CSVをインポートしてください。"
