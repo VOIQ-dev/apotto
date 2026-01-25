@@ -4,11 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch --env-file=.env.local src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.91.1",
     "cors": "^2.8.5",
     "express": "^4.21.2",
     "playwright": "1.57.0"
@@ -21,4 +22,3 @@
     "typescript": "^5.7.2"
   }
 }
-

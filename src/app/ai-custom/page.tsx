@@ -1269,215 +1269,106 @@ export default function AiCustomPage() {
         };
       });
 
-      // バッチ送信API呼び出し（SSE）
+      // バッチ送信API呼び出し（非同期パターン）
+      const leadIds = batchItems
+        .map((item) => item.card.leadId)
+        .filter(Boolean) as string[];
+
       const response = await fetch("/api/auto-submit/batch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           items: batchItems.map((item) => item.payload),
-          debug: false, // 本番環境ではヘッドレスモード
+          leadIds,
+          debug: false,
         }),
       });
 
-      if (!response.ok || !response.body) {
+      if (!response.ok) {
         throw new Error("Batch request failed");
       }
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
+      const { jobId } = await response.json();
+      pushLog(`バッチジョブ開始（Job ID: ${jobId}）`);
+
+      // ポーリングで進捗確認（2秒ごと）
       let successCount = 0;
       let failedCount = 0;
+      let lastCompletedCount = 0;
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        const text = decoder.decode(value);
-        const lines = text
-          .split("\n")
-          .filter((line) => line.startsWith("data: "));
-
-        for (const line of lines) {
+      // Promiseでポーリング完了を待つ
+      await new Promise<void>((resolve, reject) => {
+        const pollInterval = setInterval(async () => {
           try {
-            const data = JSON.parse(line.slice(6));
+            const jobRes = await fetch(`/api/batch-jobs/${jobId}`);
+            if (!jobRes.ok) {
+              console.error("Failed to fetch job status");
+              return;
+            }
 
-            if (data.type === "item_start") {
-              const item = batchItems[data.index];
-              if (item) {
+            const job = await jobRes.json();
+
+            // 新たに完了したアイテムがあればログ表示
+            if (job.completed_items + job.failed_items > lastCompletedCount) {
+              successCount = job.completed_items;
+              failedCount = job.failed_items;
+              lastCompletedCount = successCount + failedCount;
+
+              pushLog(
+                `進捗: ${lastCompletedCount}/${job.total_items}件完了（成功 ${successCount} / 失敗 ${failedCount}）`,
+              );
+            }
+
+            // 完了またはエラーの場合
+            if (job.status === "completed" || job.status === "failed") {
+              clearInterval(pollInterval);
+
+              if (job.status === "completed") {
                 pushLog(
-                  `送信中: ${item.card.companyName || item.card.homepageUrl}`,
+                  `✅ 送信完了（成功 ${job.completed_items} / 失敗 ${job.failed_items}）`,
                 );
-              }
-            } else if (data.type === "item_complete") {
-              const item = batchItems[data.index];
-              if (item) {
-                const label = item.card.companyName || item.card.homepageUrl;
-                if (data.success) {
-                  successCount++;
-                  pushLog(`送信成功: ${label}`);
-                  // PDF送信ログを保存
+
+                // PDF送信ログを保存（成功したアイテムのみ）
+                for (const item of batchItems) {
                   if (item.linkEntries.length > 0) {
-                    await fetch("/api/pdf/send-log", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({
-                        logs: item.linkEntries.map((entry) => ({
-                          pdf_id: entry.pdfId,
-                          token: entry.token,
-                          recipient_company_name: item.card.companyName,
-                          recipient_homepage_url: item.card.homepageUrl,
-                          recipient_email: item.card.email,
-                          sent_at: item.sentAtIso,
-                        })),
-                      }),
-                    });
-                  }
-                  // リードの送信結果をDBに更新（leadIdまたはhomepageUrlで検索）
-                  try {
-                    if (item.card.leadId) {
-                      // leadIdがあれば直接更新
-                      const updateRes = await fetch(
-                        `/api/leads/${item.card.leadId}`,
-                        {
-                          method: "PATCH",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ sendStatus: "success" }),
-                        },
-                      );
-                      if (!updateRes.ok) {
-                        const errText = await updateRes.text();
-                        pushLog(`⚠️ DB更新失敗（${label}）: ${errText}`);
-                        console.error("Failed to update lead status:", errText);
-                      }
-                    } else {
-                      // leadIdがない場合はhomepageUrlで検索
-                      const normalizedUrl = normalizeHomepageUrl(
-                        item.card.homepageUrl,
-                      );
-                      console.log(
-                        `[DB更新] 成功: ${label}, 元URL: ${item.card.homepageUrl}, 正規化URL: ${normalizedUrl}`,
-                      );
-                      const updateRes = await fetch(`/api/leads`, {
-                        method: "PATCH",
+                    const itemResult = job.results?.find(
+                      (r: any) => r.leadId === item.card.leadId,
+                    );
+                    if (itemResult?.success) {
+                      await fetch("/api/pdf/send-log", {
+                        method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
-                          homepageUrl: normalizedUrl,
-                          sendStatus: "success",
+                          logs: item.linkEntries.map((entry) => ({
+                            pdf_id: entry.pdfId,
+                            token: entry.token,
+                            recipient_company_name: item.card.companyName,
+                            recipient_homepage_url: item.card.homepageUrl,
+                            recipient_email: item.card.email,
+                            sent_at: item.sentAtIso,
+                          })),
                         }),
                       });
-                      if (!updateRes.ok) {
-                        const errText = await updateRes.text();
-                        if (updateRes.status === 404) {
-                          pushLog(
-                            `⚠️ DBにリードが見つかりません（${label}）正規化URL: ${normalizedUrl}`,
-                          );
-                        } else {
-                          pushLog(`⚠️ DB更新失敗（${label}）: ${errText}`);
-                        }
-                        console.error("Failed to update lead status:", errText);
-                      } else {
-                        console.log(`[DB更新] 成功確認: ${label}`);
-                      }
                     }
-                  } catch (updateErr) {
-                    pushLog(`⚠️ DB更新エラー（${label}）: ${updateErr}`);
-                    console.error("Update error:", updateErr);
-                  }
-                } else {
-                  failedCount++;
-                  // CAPTCHA検出の場合は blocked、それ以外は failed
-                  const isCaptcha = data.note === "CAPTCHA detected";
-                  const newStatus = isCaptcha ? "blocked" : "failed";
-                  pushLog(
-                    isCaptcha
-                      ? `送信不可（CAPTCHA）: ${label}`
-                      : `送信失敗: ${label}`,
-                  );
-                  // リードの送信結果をDBに更新（leadIdまたはhomepageUrlで検索）
-                  try {
-                    if (item.card.leadId) {
-                      // leadIdがあれば直接更新
-                      const updateRes = await fetch(
-                        `/api/leads/${item.card.leadId}`,
-                        {
-                          method: "PATCH",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ sendStatus: newStatus }),
-                        },
-                      );
-                      if (!updateRes.ok) {
-                        const errText = await updateRes.text();
-                        pushLog(`⚠️ DB更新失敗（${label}）: ${errText}`);
-                        console.error("Failed to update lead status:", errText);
-                      }
-                    } else {
-                      // leadIdがない場合はhomepageUrlで検索
-                      const normalizedUrl = normalizeHomepageUrl(
-                        item.card.homepageUrl,
-                      );
-                      console.log(
-                        `[DB更新] 失敗: ${label}, 元URL: ${item.card.homepageUrl}, 正規化URL: ${normalizedUrl}, status: ${newStatus}`,
-                      );
-                      const updateRes = await fetch(`/api/leads`, {
-                        method: "PATCH",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                          homepageUrl: normalizedUrl,
-                          sendStatus: newStatus,
-                        }),
-                      });
-                      if (!updateRes.ok) {
-                        const errText = await updateRes.text();
-                        if (updateRes.status === 404) {
-                          pushLog(
-                            `⚠️ DBにリードが見つかりません（${label}）正規化URL: ${normalizedUrl}`,
-                          );
-                        } else {
-                          pushLog(`⚠️ DB更新失敗（${label}）: ${errText}`);
-                        }
-                        console.error("Failed to update lead status:", errText);
-                      } else {
-                        console.log(
-                          `[DB更新] 成功確認: ${label}, status: ${newStatus}`,
-                        );
-                      }
-                    }
-                  } catch (updateErr) {
-                    pushLog(`⚠️ DB更新エラー（${label}）: ${updateErr}`);
-                    console.error("Update error:", updateErr);
                   }
                 }
-                setSendResults((prev) => [
-                  ...prev,
-                  {
-                    companyName: item.card.companyName || label,
-                    homepageUrl: item.card.homepageUrl,
-                    email: item.card.email,
-                    status: data.success
-                      ? "success"
-                      : data.note === "CAPTCHA detected"
-                        ? "blocked"
-                        : "failed",
-                    sentAtIso: item.sentAtIso,
-                  },
-                ]);
-              }
-            } else if (data.type === "item_error") {
-              const item = batchItems[data.index];
-              if (item) {
-                failedCount++;
+                resolve();
+              } else {
                 pushLog(
-                  `送信エラー: ${item.card.companyName || item.card.homepageUrl}`,
+                  `❌ バッチ処理失敗: ${job.error_message || "Unknown error"}`,
                 );
+                reject(new Error(job.error_message || "Batch job failed"));
               }
-            } else if (data.type === "batch_complete") {
-              pushLog(`送信完了（成功 ${successCount} / 失敗 ${failedCount}）`);
             }
-          } catch {
-            // JSONパースエラーは無視
+          } catch (pollErr) {
+            console.error("Polling error:", pollErr);
+            clearInterval(pollInterval);
+            reject(pollErr);
           }
-        }
-      }
+        }, 2000);
+
+        // タイムアウトなし（Railway側で各アイテムのタイムアウトを管理）
+      });
 
       return { successCount, failedCount };
     },
@@ -1565,7 +1456,6 @@ export default function AiCustomPage() {
       try {
         // 送信待ちキュー
         const readyQueue: CompanyCard[] = [];
-        let generationComplete = false;
         let isSendingBatch = false;
         let totalGenerated = 0;
         let totalSent = 0;
@@ -1673,10 +1563,10 @@ export default function AiCustomPage() {
           await Promise.all(chunk);
         }
 
-        generationComplete = true;
-
         // 全文言生成完了後、全アイテムを1回のバッチで送信
-        pushLog(`📤 全文言生成完了。一括送信を開始します（${readyQueue.length}件）`);
+        pushLog(
+          `📤 全文言生成完了。一括送信を開始します（${readyQueue.length}件）`,
+        );
         await processSendQueue();
 
         // 送信処理が完了するまで待機
@@ -2589,7 +2479,9 @@ export default function AiCustomPage() {
 
             <label
               onDragOver={uploadState.isImporting ? undefined : handleDragOver}
-              onDragLeave={uploadState.isImporting ? undefined : handleDragLeave}
+              onDragLeave={
+                uploadState.isImporting ? undefined : handleDragLeave
+              }
               onDrop={uploadState.isImporting ? undefined : handleDrop}
               className={`dropzone group relative flex flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed px-4 py-8 transition-colors ${
                 uploadState.isImporting
@@ -2769,7 +2661,7 @@ export default function AiCustomPage() {
                 checkboxes: true,
                 headerCheckbox: true,
                 enableClickSelection: false,
-                selectAll: 'currentPage', // 現在のページのみ選択
+                selectAll: "currentPage", // 現在のページのみ選択
               }}
               animateRows={true}
               pagination={true}
