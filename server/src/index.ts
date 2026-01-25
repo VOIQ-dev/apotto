@@ -1,6 +1,9 @@
 import express from "express";
 import cors from "cors";
 import { chromium, Browser, Page, Frame } from "playwright";
+import fs from "fs";
+import path from "path";
+import os from "os";
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -32,7 +35,7 @@ app.get("/queue-status", (_req, res) => {
     activeBrowsers: currentBrowserCount,
     maxBrowsers: MAX_CONCURRENT_BROWSERS,
     availableSlots: MAX_CONCURRENT_BROWSERS - currentBrowserCount,
-    queueItems: sendQueue.map(item => ({
+    queueItems: sendQueue.map((item) => ({
       companyId: item.companyId,
       itemCount: item.items.length,
       waitingSeconds: Math.floor((Date.now() - item.addedAt.getTime()) / 1000),
@@ -45,7 +48,9 @@ app.get("/queue-status", (_req, res) => {
 const MAX_CONCURRENT_BROWSERS = 10;
 let currentBrowserCount = 0; // 現在実行中のブラウザ数
 
-console.log(`[server] Starting with MAX_CONCURRENT_BROWSERS=${MAX_CONCURRENT_BROWSERS} (10 companies can process simultaneously)`);
+console.log(
+  `[server] Starting with MAX_CONCURRENT_BROWSERS=${MAX_CONCURRENT_BROWSERS} (10 companies can process simultaneously)`,
+);
 
 // 送信キュー（待機中のリクエストを管理）
 interface QueueItem {
@@ -131,29 +136,39 @@ async function processQueue() {
 
   // 同時実行数チェック
   if (currentBrowserCount >= MAX_CONCURRENT_BROWSERS) {
-    console.log(`[queue] Maximum browsers (${MAX_CONCURRENT_BROWSERS}) reached, waiting...`);
+    console.log(
+      `[queue] Maximum browsers (${MAX_CONCURRENT_BROWSERS}) reached, waiting...`,
+    );
     return;
   }
 
   isProcessingQueue = true;
 
   try {
-    while (sendQueue.length > 0 && currentBrowserCount < MAX_CONCURRENT_BROWSERS) {
+    while (
+      sendQueue.length > 0 &&
+      currentBrowserCount < MAX_CONCURRENT_BROWSERS
+    ) {
       const queueItem = sendQueue.shift();
       if (!queueItem) break;
 
       currentBrowserCount++;
-      const waitTime = Math.floor((Date.now() - queueItem.addedAt.getTime()) / 1000);
-      console.log(`[queue] Processing request (waited ${waitTime}s). Active browsers: ${currentBrowserCount}/${MAX_CONCURRENT_BROWSERS}`);
+      const waitTime = Math.floor(
+        (Date.now() - queueItem.addedAt.getTime()) / 1000,
+      );
+      console.log(
+        `[queue] Processing request (waited ${waitTime}s). Active browsers: ${currentBrowserCount}/${MAX_CONCURRENT_BROWSERS}`,
+      );
 
       // 非同期でバッチ処理を実行（並列処理）
-      executeBatch(queueItem)
-        .finally(() => {
-          currentBrowserCount--;
-          console.log(`[queue] Request completed. Active browsers: ${currentBrowserCount}/${MAX_CONCURRENT_BROWSERS}`);
-          // 次のキューアイテムを処理
-          setTimeout(() => processQueue(), 100);
-        });
+      executeBatch(queueItem).finally(() => {
+        currentBrowserCount--;
+        console.log(
+          `[queue] Request completed. Active browsers: ${currentBrowserCount}/${MAX_CONCURRENT_BROWSERS}`,
+        );
+        // 次のキューアイテムを処理
+        setTimeout(() => processQueue(), 100);
+      });
     }
   } finally {
     isProcessingQueue = false;
@@ -166,20 +181,34 @@ async function executeBatch(queueItem: QueueItem) {
 
   // SSE接続が切断されたかチェック
   let connectionClosed = false;
-  res.on('close', () => {
+  res.on("close", () => {
     connectionClosed = true;
     console.log(`[executeBatch] Client disconnected for company ${companyId}`);
   });
 
+  // バッチ全体で共有する一時ディレクトリを作成（/tmp容量枯渇防止）
+  const batchUserDataDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), `playwright-batch-${companyId}-`),
+  );
+  console.log(
+    `[executeBatch] Created persistent user data directory: ${batchUserDataDir}`,
+  );
+
   try {
-    console.log(`[executeBatch] Starting batch for company ${companyId}: ${items.length} items`);
-    res.write(`data: ${JSON.stringify({ type: "batch_start", queuePosition: 0 })}\n\n`);
+    console.log(
+      `[executeBatch] Starting batch for company ${companyId}: ${items.length} items`,
+    );
+    res.write(
+      `data: ${JSON.stringify({ type: "batch_start", queuePosition: 0 })}\n\n`,
+    );
 
     // 各アイテムを順次処理（1アイテムごとに新しいブラウザを起動・処理・クローズ）
     for (let i = 0; i < items.length; i++) {
       // SSE接続が切断されていたら処理中断
       if (connectionClosed) {
-        console.log(`[executeBatch] Connection closed, aborting batch at item ${i + 1}/${items.length}`);
+        console.log(
+          `[executeBatch] Connection closed, aborting batch at item ${i + 1}/${items.length}`,
+        );
         break;
       }
 
@@ -197,11 +226,13 @@ async function executeBatch(queueItem: QueueItem) {
             })}\n\n`,
           );
         } catch (writeError) {
-          console.error(`[executeBatch] Failed to write item_start, connection may be closed`);
+          console.error(
+            `[executeBatch] Failed to write item_start, connection may be closed`,
+          );
           break; // SSE接続が切れたらループ終了
         }
 
-        // 各アイテムごとに新しいブラウザを起動（メモリ完全リセット）
+        // 各アイテムごとに新しいブラウザを起動（共有userDataDirで/tmp容量節約）
         console.log(
           `[auto-submit/batch] [${i + 1}/${items.length}] Launching fresh browser for ${payload.url}`,
         );
@@ -209,6 +240,9 @@ async function executeBatch(queueItem: QueueItem) {
           headless: !debug,
           slowMo: debug ? 200 : 0,
           args: [
+            // 共有ユーザーデータディレクトリを指定（/tmp容量枯渇防止）
+            `--user-data-dir=${batchUserDataDir}`,
+
             // セキュリティ関連
             "--no-sandbox",
             "--disable-setuid-sandbox",
@@ -246,7 +280,9 @@ async function executeBatch(queueItem: QueueItem) {
           console.log(
             `[auto-submit/batch] [${i + 1}/${items.length}] Failure reason: ${result.note || "Unknown"}`,
           );
-          console.log(`[auto-submit/batch] [${i + 1}/${items.length}] Error logs:\n${result.logs.slice(-5).join("\n")}`);
+          console.log(
+            `[auto-submit/batch] [${i + 1}/${items.length}] Error logs:\n${result.logs.slice(-5).join("\n")}`,
+          );
         }
 
         // 処理完了を通知
@@ -263,7 +299,9 @@ async function executeBatch(queueItem: QueueItem) {
             })}\n\n`,
           );
         } catch (writeError) {
-          console.error(`[executeBatch] Failed to write item_complete, connection may be closed`);
+          console.error(
+            `[executeBatch] Failed to write item_complete, connection may be closed`,
+          );
           break; // SSE接続が切れたらループ終了
         }
       } catch (error) {
@@ -297,13 +335,17 @@ async function executeBatch(queueItem: QueueItem) {
             })}\n\n`,
           );
         } catch (writeError) {
-          console.error(`[executeBatch] Failed to write item_error, connection may be closed`);
+          console.error(
+            `[executeBatch] Failed to write item_error, connection may be closed`,
+          );
           break; // SSE接続が切れたらループ終了
         }
 
         // 致命的なエラーの場合はバッチ全体を中断
         if (isFatalError) {
-          console.error(`[executeBatch] Fatal error detected, aborting batch at item ${i + 1}/${items.length}`);
+          console.error(
+            `[executeBatch] Fatal error detected, aborting batch at item ${i + 1}/${items.length}`,
+          );
           break;
         }
       } finally {
@@ -317,40 +359,54 @@ async function executeBatch(queueItem: QueueItem) {
           console.log(
             `[auto-submit/batch] [${i + 1}/${items.length}] Browser closed successfully`,
           );
-
-          // 次のブラウザ起動前に1秒待機（メモリ回収時間）
-          if (i < items.length - 1) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            console.log(`[auto-submit/batch] Waiting 1s before next browser launch...`);
-          }
         }
       }
     }
 
     // 全完了を通知
     if (!connectionClosed) {
-      console.log(`[executeBatch] Batch completed for company ${companyId}: ${items.length} items processed`);
+      console.log(
+        `[executeBatch] Batch completed for company ${companyId}: ${items.length} items processed`,
+      );
       try {
         res.write(
           `data: ${JSON.stringify({ type: "batch_complete", total: items.length })}\n\n`,
         );
       } catch (writeError) {
-        console.error(`[executeBatch] Failed to write batch_complete, connection already closed`);
+        console.error(
+          `[executeBatch] Failed to write batch_complete, connection already closed`,
+        );
       }
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`[executeBatch] Fatal error for company ${companyId}: ${message}`);
+    console.error(
+      `[executeBatch] Fatal error for company ${companyId}: ${message}`,
+    );
     if (!connectionClosed) {
       try {
         res.write(
           `data: ${JSON.stringify({ type: "fatal_error", error: message })}\n\n`,
         );
       } catch (writeError) {
-        console.error(`[executeBatch] Failed to write fatal_error, connection already closed`);
+        console.error(
+          `[executeBatch] Failed to write fatal_error, connection already closed`,
+        );
       }
     }
   } finally {
+    // バッチ処理完了後に一時ディレクトリを削除（/tmp容量を解放）
+    try {
+      fs.rmSync(batchUserDataDir, { recursive: true, force: true });
+      console.log(
+        `[executeBatch] Cleaned up user data directory: ${batchUserDataDir}`,
+      );
+    } catch (cleanupError) {
+      console.error(
+        `[executeBatch] Failed to cleanup user data directory: ${cleanupError}`,
+      );
+    }
+
     if (!connectionClosed) {
       res.end();
     }
@@ -368,13 +424,16 @@ app.post("/auto-submit/batch", async (req, res) => {
   }
 
   // リクエスト元の企業識別（IPアドレスやヘッダーから取得可能）
-  const companyId = req.headers["x-company-id"] as string ||
-                    req.ip ||
-                    `company_${Date.now()}`;
+  const companyId =
+    (req.headers["x-company-id"] as string) ||
+    req.ip ||
+    `company_${Date.now()}`;
 
   // 現在のキューサイズ確認
   const queueLength = sendQueue.length;
-  const estimatedWaitTime = Math.ceil((queueLength * 50) / MAX_CONCURRENT_BROWSERS); // 大雑把な見積もり
+  const estimatedWaitTime = Math.ceil(
+    (queueLength * 50) / MAX_CONCURRENT_BROWSERS,
+  ); // 大雑把な見積もり
 
   // キューに追加
   const queueItem: QueueItem = {
@@ -387,7 +446,9 @@ app.post("/auto-submit/batch", async (req, res) => {
   };
 
   sendQueue.push(queueItem);
-  console.log(`[queue] Request from ${companyId} added. Queue size: ${sendQueue.length}, Estimated wait: ${estimatedWaitTime}s`);
+  console.log(
+    `[queue] Request from ${companyId} added. Queue size: ${sendQueue.length}, Estimated wait: ${estimatedWaitTime}s`,
+  );
 
   // SSE設定
   res.setHeader("Content-Type", "text/event-stream");
@@ -1419,7 +1480,9 @@ async function findAndFillForm(
           }
         }
 
-        log(`Checked checkbox[${i}]: ${labelText.trim() || checkboxName || "unlabeled"}`);
+        log(
+          `Checked checkbox[${i}]: ${labelText.trim() || checkboxName || "unlabeled"}`,
+        );
       }
     } catch {
       // チェックできない場合はスキップ
@@ -1670,7 +1733,8 @@ async function findAndFillForm(
   const allInputsForRequiredCheck = formFound.locator(
     'input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="submit"]):not([type="button"])',
   );
-  const allInputsForRequiredCheckCount = await allInputsForRequiredCheck.count();
+  const allInputsForRequiredCheckCount =
+    await allInputsForRequiredCheck.count();
   for (let i = 0; i < allInputsForRequiredCheckCount; i++) {
     const input = allInputsForRequiredCheck.nth(i);
     try {
@@ -2015,11 +2079,16 @@ async function submitForm(
         const isDisabled = await btn.isDisabled().catch(() => false);
         if (isDisabled) {
           log(`Button is disabled, attempting to enable: ${sel}`);
-          await btn.evaluate((el) => {
-            if (el instanceof HTMLInputElement || el instanceof HTMLButtonElement) {
-              el.disabled = false;
-            }
-          }).catch(() => {});
+          await btn
+            .evaluate((el) => {
+              if (
+                el instanceof HTMLInputElement ||
+                el instanceof HTMLButtonElement
+              ) {
+                el.disabled = false;
+              }
+            })
+            .catch(() => {});
         }
 
         const urlBefore = page.url();
