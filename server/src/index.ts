@@ -1,9 +1,6 @@
 import express from "express";
 import cors from "cors";
 import { chromium, Browser, Page, Frame } from "playwright";
-import fs from "fs";
-import path from "path";
-import os from "os";
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -175,7 +172,7 @@ async function processQueue() {
   }
 }
 
-// 実際のバッチ処理実行（完全直列処理：1アイテム = 1ブラウザライフサイクル）
+// 実際のバッチ処理実行（Playwright推奨: 1ブラウザ + 各アイテムで新しいコンテキスト）
 async function executeBatch(queueItem: QueueItem) {
   const { res, items, debug, companyId } = queueItem;
 
@@ -186,13 +183,7 @@ async function executeBatch(queueItem: QueueItem) {
     console.log(`[executeBatch] Client disconnected for company ${companyId}`);
   });
 
-  // バッチ全体で共有する一時ディレクトリを作成（/tmp容量枯渇防止）
-  const batchUserDataDir = fs.mkdtempSync(
-    path.join(os.tmpdir(), `playwright-batch-${companyId}-`),
-  );
-  console.log(
-    `[executeBatch] Created persistent user data directory: ${batchUserDataDir}`,
-  );
+  let browser: Browser | null = null;
 
   try {
     console.log(
@@ -202,7 +193,37 @@ async function executeBatch(queueItem: QueueItem) {
       `data: ${JSON.stringify({ type: "batch_start", queuePosition: 0 })}\n\n`,
     );
 
-    // 各アイテムを順次処理（1アイテムごとに新しいブラウザを起動・処理・クローズ）
+    // バッチ全体で1つのブラウザを起動（Playwright推奨）
+    console.log(`[executeBatch] Launching single browser for entire batch`);
+    browser = await chromium.launch({
+      headless: !debug,
+      slowMo: debug ? 200 : 0,
+      args: [
+        // セキュリティ関連
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+
+        // メモリ最適化（重要）
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--disable-gl-drawing-for-tests",
+        "--disable-accelerated-2d-canvas",
+
+        // バックグラウンド処理の無効化
+        "--disable-background-timer-throttling",
+        "--disable-backgrounding-occluded-windows",
+        "--disable-renderer-backgrounding",
+
+        // 不要な機能の無効化
+        "--disable-extensions",
+        "--disable-plugins",
+        "--memory-pressure-off",
+      ],
+    });
+    console.log(`[executeBatch] Browser launched successfully`);
+    res.write(`data: ${JSON.stringify({ type: "browser_ready" })}\n\n`);
+
+    // 各アイテムを順次処理（各アイテムで新しいコンテキストを作成）
     for (let i = 0; i < items.length; i++) {
       // SSE接続が切断されていたら処理中断
       if (connectionClosed) {
@@ -213,7 +234,6 @@ async function executeBatch(queueItem: QueueItem) {
       }
 
       const payload = items[i];
-      let browser: Browser | null = null;
 
       try {
         // 処理開始を通知
@@ -229,47 +249,14 @@ async function executeBatch(queueItem: QueueItem) {
           console.error(
             `[executeBatch] Failed to write item_start, connection may be closed`,
           );
-          break; // SSE接続が切れたらループ終了
+          break;
         }
 
-        // 各アイテムごとに新しいブラウザを起動（共有userDataDirで/tmp容量節約）
         console.log(
-          `[auto-submit/batch] [${i + 1}/${items.length}] Launching fresh browser for ${payload.url}`,
+          `[auto-submit/batch] [${i + 1}/${items.length}] Processing ${payload.url}`,
         );
-        browser = await chromium.launch({
-          headless: !debug,
-          slowMo: debug ? 200 : 0,
-          args: [
-            // 共有ユーザーデータディレクトリを指定（/tmp容量枯渇防止）
-            `--user-data-dir=${batchUserDataDir}`,
 
-            // セキュリティ関連
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-
-            // メモリ最適化（重要）
-            "--disable-dev-shm-usage",
-            "--disable-gpu",
-            "--disable-gl-drawing-for-tests", // 大きな効果
-            "--disable-accelerated-2d-canvas",
-
-            // バックグラウンド処理の無効化
-            "--disable-background-timer-throttling",
-            "--disable-backgrounding-occluded-windows",
-            "--disable-renderer-backgrounding",
-
-            // 不要な機能の無効化
-            "--disable-extensions",
-            "--disable-plugins",
-            "--memory-pressure-off",
-          ],
-        });
-
-        if (i === 0) {
-          res.write(`data: ${JSON.stringify({ type: "browser_ready" })}\n\n`);
-        }
-
-        // フォーム送信処理
+        // フォーム送信処理（内部で新しいコンテキストを作成・破棄）
         const result = await autoSubmitWithBrowser(browser, payload);
 
         // 詳細ログ出力
@@ -302,7 +289,7 @@ async function executeBatch(queueItem: QueueItem) {
           console.error(
             `[executeBatch] Failed to write item_complete, connection may be closed`,
           );
-          break; // SSE接続が切れたらループ終了
+          break;
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -317,12 +304,10 @@ async function executeBatch(queueItem: QueueItem) {
           );
         }
 
-        // ブラウザクラッシュやメモリエラーの場合はバッチ全体を中断
+        // ブラウザクラッシュの場合はバッチ全体を中断
         const isFatalError =
-          message.includes("Target page, context or browser has been closed") ||
-          message.includes("Protocol error") ||
           message.includes("Browser closed") ||
-          message.includes("Timeout");
+          message.includes("Protocol error");
 
         try {
           res.write(
@@ -338,27 +323,14 @@ async function executeBatch(queueItem: QueueItem) {
           console.error(
             `[executeBatch] Failed to write item_error, connection may be closed`,
           );
-          break; // SSE接続が切れたらループ終了
-        }
-
-        // 致命的なエラーの場合はバッチ全体を中断
-        if (isFatalError) {
-          console.error(
-            `[executeBatch] Fatal error detected, aborting batch at item ${i + 1}/${items.length}`,
-          );
           break;
         }
-      } finally {
-        // ブラウザを確実にクローズ（メモリリーク防止）
-        if (browser) {
-          await browser.close().catch((err) => {
-            console.error(
-              `[auto-submit/batch] [${i + 1}/${items.length}] Failed to close browser: ${err}`,
-            );
-          });
-          console.log(
-            `[auto-submit/batch] [${i + 1}/${items.length}] Browser closed successfully`,
+
+        if (isFatalError) {
+          console.error(
+            `[executeBatch] Fatal browser error, aborting batch at item ${i + 1}/${items.length}`,
           );
+          break;
         }
       }
     }
@@ -395,16 +367,12 @@ async function executeBatch(queueItem: QueueItem) {
       }
     }
   } finally {
-    // バッチ処理完了後に一時ディレクトリを削除（/tmp容量を解放）
-    try {
-      fs.rmSync(batchUserDataDir, { recursive: true, force: true });
-      console.log(
-        `[executeBatch] Cleaned up user data directory: ${batchUserDataDir}`,
-      );
-    } catch (cleanupError) {
-      console.error(
-        `[executeBatch] Failed to cleanup user data directory: ${cleanupError}`,
-      );
+    // バッチ終了時にブラウザを確実にクローズ
+    if (browser) {
+      await browser.close().catch((err) => {
+        console.error(`[executeBatch] Failed to close browser: ${err}`);
+      });
+      console.log(`[executeBatch] Browser closed successfully`);
     }
 
     if (!connectionClosed) {
