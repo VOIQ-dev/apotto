@@ -164,24 +164,42 @@ async function processQueue() {
 async function executeBatch(queueItem: QueueItem) {
   const { res, items, debug, companyId } = queueItem;
 
+  // SSE接続が切断されたかチェック
+  let connectionClosed = false;
+  res.on('close', () => {
+    connectionClosed = true;
+    console.log(`[executeBatch] Client disconnected for company ${companyId}`);
+  });
+
   try {
     console.log(`[executeBatch] Starting batch for company ${companyId}: ${items.length} items`);
     res.write(`data: ${JSON.stringify({ type: "batch_start", queuePosition: 0 })}\n\n`);
 
     // 各アイテムを順次処理（1アイテムごとに新しいブラウザを起動・処理・クローズ）
     for (let i = 0; i < items.length; i++) {
+      // SSE接続が切断されていたら処理中断
+      if (connectionClosed) {
+        console.log(`[executeBatch] Connection closed, aborting batch at item ${i + 1}/${items.length}`);
+        break;
+      }
+
       const payload = items[i];
       let browser: Browser | null = null;
 
       try {
         // 処理開始を通知
-        res.write(
-          `data: ${JSON.stringify({
-            type: "item_start",
-            index: i,
-            url: payload.url,
-          })}\n\n`,
-        );
+        try {
+          res.write(
+            `data: ${JSON.stringify({
+              type: "item_start",
+              index: i,
+              url: payload.url,
+            })}\n\n`,
+          );
+        } catch (writeError) {
+          console.error(`[executeBatch] Failed to write item_start, connection may be closed`);
+          break; // SSE接続が切れたらループ終了
+        }
 
         // 各アイテムごとに新しいブラウザを起動（メモリ完全リセット）
         console.log(
@@ -232,17 +250,22 @@ async function executeBatch(queueItem: QueueItem) {
         }
 
         // 処理完了を通知
-        res.write(
-          `data: ${JSON.stringify({
-            type: "item_complete",
-            index: i,
-            url: payload.url,
-            success: result.success,
-            logs: result.logs,
-            finalUrl: result.finalUrl,
-            note: result.note,
-          })}\n\n`,
-        );
+        try {
+          res.write(
+            `data: ${JSON.stringify({
+              type: "item_complete",
+              index: i,
+              url: payload.url,
+              success: result.success,
+              logs: result.logs,
+              finalUrl: result.finalUrl,
+              note: result.note,
+            })}\n\n`,
+          );
+        } catch (writeError) {
+          console.error(`[executeBatch] Failed to write item_complete, connection may be closed`);
+          break; // SSE接続が切れたらループ終了
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         const stack = error instanceof Error ? error.stack : undefined;
@@ -256,14 +279,33 @@ async function executeBatch(queueItem: QueueItem) {
           );
         }
 
-        res.write(
-          `data: ${JSON.stringify({
-            type: "item_error",
-            index: i,
-            url: payload.url,
-            error: message,
-          })}\n\n`,
-        );
+        // ブラウザクラッシュやメモリエラーの場合はバッチ全体を中断
+        const isFatalError =
+          message.includes("Target page, context or browser has been closed") ||
+          message.includes("Protocol error") ||
+          message.includes("Browser closed") ||
+          message.includes("Timeout");
+
+        try {
+          res.write(
+            `data: ${JSON.stringify({
+              type: "item_error",
+              index: i,
+              url: payload.url,
+              error: message,
+              fatal: isFatalError,
+            })}\n\n`,
+          );
+        } catch (writeError) {
+          console.error(`[executeBatch] Failed to write item_error, connection may be closed`);
+          break; // SSE接続が切れたらループ終了
+        }
+
+        // 致命的なエラーの場合はバッチ全体を中断
+        if (isFatalError) {
+          console.error(`[executeBatch] Fatal error detected, aborting batch at item ${i + 1}/${items.length}`);
+          break;
+        }
       } finally {
         // ブラウザを確実にクローズ（メモリリーク防止）
         if (browser) {
@@ -275,23 +317,43 @@ async function executeBatch(queueItem: QueueItem) {
           console.log(
             `[auto-submit/batch] [${i + 1}/${items.length}] Browser closed successfully`,
           );
+
+          // 次のブラウザ起動前に1秒待機（メモリ回収時間）
+          if (i < items.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            console.log(`[auto-submit/batch] Waiting 1s before next browser launch...`);
+          }
         }
       }
     }
 
     // 全完了を通知
-    console.log(`[executeBatch] Batch completed for company ${companyId}: ${items.length} items processed`);
-    res.write(
-      `data: ${JSON.stringify({ type: "batch_complete", total: items.length })}\n\n`,
-    );
+    if (!connectionClosed) {
+      console.log(`[executeBatch] Batch completed for company ${companyId}: ${items.length} items processed`);
+      try {
+        res.write(
+          `data: ${JSON.stringify({ type: "batch_complete", total: items.length })}\n\n`,
+        );
+      } catch (writeError) {
+        console.error(`[executeBatch] Failed to write batch_complete, connection already closed`);
+      }
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[executeBatch] Fatal error for company ${companyId}: ${message}`);
-    res.write(
-      `data: ${JSON.stringify({ type: "fatal_error", error: message })}\n\n`,
-    );
+    if (!connectionClosed) {
+      try {
+        res.write(
+          `data: ${JSON.stringify({ type: "fatal_error", error: message })}\n\n`,
+        );
+      } catch (writeError) {
+        console.error(`[executeBatch] Failed to write fatal_error, connection already closed`);
+      }
+    }
   } finally {
-    res.end();
+    if (!connectionClosed) {
+      res.end();
+    }
   }
 }
 
