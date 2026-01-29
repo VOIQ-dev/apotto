@@ -47,6 +47,9 @@ app.get("/queue-status", (_req, res) => {
     activeBrowsers: currentBrowserCount,
     maxBrowsers: MAX_CONCURRENT_BROWSERS,
     availableSlots: MAX_CONCURRENT_BROWSERS - currentBrowserCount,
+    asyncQueueLength: asyncJobQueue.length,
+    activeAsyncJobs: currentAsyncJobCount,
+    maxAsyncJobs: MAX_CONCURRENT_ASYNC_JOBS,
     queueItems: sendQueue.map((item) => ({
       companyId: item.companyId,
       itemCount: item.items.length,
@@ -56,12 +59,12 @@ app.get("/queue-status", (_req, res) => {
 });
 
 // ===== 同時実行制御のための変数 =====
-// 10社まで同時処理可能（32GBメモリで余裕あり、各社は内部で直列処理）
-const MAX_CONCURRENT_BROWSERS = 10;
+// Railway/Docker環境ではリソース制限があるため1に設定
+const MAX_CONCURRENT_BROWSERS = 1;
 let currentBrowserCount = 0; // 現在実行中のブラウザ数
 
 console.log(
-  `[server] Starting with MAX_CONCURRENT_BROWSERS=${MAX_CONCURRENT_BROWSERS} (10 companies can process simultaneously)`,
+  `[server] Starting with MAX_CONCURRENT_BROWSERS=${MAX_CONCURRENT_BROWSERS} (serial processing for stability)`,
 );
 
 // 送信キュー（待機中のリクエストを管理）
@@ -76,6 +79,65 @@ interface QueueItem {
 
 const sendQueue: QueueItem[] = [];
 let isProcessingQueue = false;
+
+// ===== batch-async 用の同時実行制御（EAGAIN対策）=====
+// NOTE: Railway ではメモリ/CPUより先に PID/FD 上限で spawn が失敗（EAGAIN）することがある。
+// batch-async はリクエスト毎にバックグラウンド処理を起動するため、明示的にキューで直列化する。
+// env ではなくコード側で固定（まずは安定性優先で1）
+const MAX_CONCURRENT_ASYNC_JOBS = 1;
+let currentAsyncJobCount = 0;
+let isProcessingAsyncQueue = false;
+type AsyncJobQueueItem = {
+  jobId: string;
+  companyId: string;
+  addedAt: Date;
+  run: () => Promise<void>;
+};
+const asyncJobQueue: AsyncJobQueueItem[] = [];
+
+async function processAsyncJobQueue() {
+  if (isProcessingAsyncQueue) return;
+  if (asyncJobQueue.length === 0) return;
+  if (currentAsyncJobCount >= MAX_CONCURRENT_ASYNC_JOBS) return;
+
+  isProcessingAsyncQueue = true;
+  try {
+    while (
+      asyncJobQueue.length > 0 &&
+      currentAsyncJobCount < MAX_CONCURRENT_ASYNC_JOBS
+    ) {
+      const item = asyncJobQueue.shift();
+      if (!item) break;
+
+      currentAsyncJobCount++;
+      const waitedSec = Math.floor(
+        (Date.now() - item.addedAt.getTime()) / 1000,
+      );
+      console.log(
+        `[batch-async/queue] Dequeued job ${item.jobId} (companyId=${item.companyId}, waited=${waitedSec}s). Active async jobs: ${currentAsyncJobCount}/${MAX_CONCURRENT_ASYNC_JOBS}`,
+      );
+
+      item
+        .run()
+        .catch((err) => {
+          console.error(
+            `[batch-async/queue] Job ${item.jobId} crashed: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        })
+        .finally(() => {
+          currentAsyncJobCount--;
+          console.log(
+            `[batch-async/queue] Job ${item.jobId} finished. Active async jobs: ${currentAsyncJobCount}/${MAX_CONCURRENT_ASYNC_JOBS}`,
+          );
+          setTimeout(() => processAsyncJobQueue(), 100);
+        });
+    }
+  } finally {
+    isProcessingAsyncQueue = false;
+  }
+}
 
 // 型定義
 type Payload = {
@@ -208,34 +270,54 @@ async function executeBatch(queueItem: QueueItem) {
       `data: ${JSON.stringify({ type: "batch_start", queuePosition: 0 })}\n\n`,
     );
 
-    // バッチ全体で1つのブラウザを起動（Playwright推奨）
+    // バッチ全体で1つのブラウザを起動（リトライ付き）
     console.log(`[executeBatch] Launching single browser for entire batch`);
-    browser = await chromium.launch({
-      headless: !debug,
-      slowMo: debug ? 200 : 0,
-      args: [
-        // セキュリティ関連
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-
-        // メモリ最適化（重要）
-        "--disable-dev-shm-usage",
-        "--disable-gpu",
-        "--disable-gl-drawing-for-tests",
-        "--disable-accelerated-2d-canvas",
-
-        // バックグラウンド処理の無効化
-        "--disable-background-timer-throttling",
-        "--disable-backgrounding-occluded-windows",
-        "--disable-renderer-backgrounding",
-
-        // 不要な機能の無効化
-        "--disable-extensions",
-        "--disable-plugins",
-        "--memory-pressure-off",
-      ],
-    });
-    console.log(`[executeBatch] Browser launched successfully`);
+    const maxLaunchRetries = 3;
+    for (let attempt = 1; attempt <= maxLaunchRetries; attempt++) {
+      try {
+        browser = await chromium.launch({
+          headless: !debug,
+          slowMo: debug ? 200 : 0,
+          args: [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--disable-gl-drawing-for-tests",
+            "--disable-accelerated-2d-canvas",
+            "--disable-background-timer-throttling",
+            "--disable-backgrounding-occluded-windows",
+            "--disable-renderer-backgrounding",
+            "--disable-extensions",
+            "--disable-plugins",
+            "--memory-pressure-off",
+            "--single-process",
+          ],
+        });
+        console.log(`[executeBatch] Browser launched successfully`);
+        break;
+      } catch (launchError) {
+        const msg =
+          launchError instanceof Error
+            ? launchError.message
+            : String(launchError);
+        console.error(
+          `[executeBatch] Browser launch failed (attempt ${attempt}): ${msg}`,
+        );
+        if (attempt < maxLaunchRetries) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, Math.pow(2, attempt) * 1000),
+          );
+        } else {
+          throw new Error(
+            `Browser launch failed after ${maxLaunchRetries} attempts: ${msg}`,
+          );
+        }
+      }
+    }
+    if (!browser) {
+      throw new Error("Browser launch failed");
+    }
     res.write(`data: ${JSON.stringify({ type: "browser_ready" })}\n\n`);
 
     // 各アイテムを順次処理（各アイテムで新しいコンテキストを作成）
@@ -667,22 +749,16 @@ async function autoSubmit(payload: Payload): Promise<Result> {
         headless: !payload.debug,
         slowMo: payload.debug ? 200 : 0,
         args: [
-          // セキュリティ関連
           "--no-sandbox",
           "--disable-setuid-sandbox",
-
-          // メモリ最適化（重要）
           "--disable-dev-shm-usage",
           "--disable-gpu",
-          "--disable-gl-drawing-for-tests", // 大きな効果
+          "--disable-gl-drawing-for-tests",
           "--disable-accelerated-2d-canvas",
-
-          // バックグラウンド処理の無効化
           "--disable-background-timer-throttling",
           "--disable-backgrounding-occluded-windows",
           "--disable-renderer-backgrounding",
-
-          // 不要な機能の無効化
+          "--single-process",
           "--disable-extensions",
           "--disable-plugins",
           "--memory-pressure-off",
@@ -2332,10 +2408,11 @@ async function submitForm(
         log(`URL after click: ${urlAfter}`);
 
         // 確認画面の判定（ページ内容とボタンで判定）
-        const pageText = await page
-          .locator("body")
-          .textContent()
-          .catch(() => "");
+        const pageText =
+          (await page
+            .locator("body")
+            .textContent()
+            .catch(() => "")) || "";
         const confirmationKeywords = [
           "入力内容の確認",
           "入力内容をご確認",
@@ -2756,158 +2833,208 @@ app.post("/auto-submit/batch-async", async (req, res) => {
   // 即座にレスポンス（非同期処理を開始）
   res.status(202).json({ message: "Batch processing started" });
 
-  // バックグラウンドで処理を実行（await しない）
-  (async () => {
-    try {
-      console.log(
-        `[batch-async] Starting job ${jobId} with ${items.length} items`,
-      );
-
-      // ジョブステータスを "running" に更新
-      await (supabase!.from("batch_jobs") as any)
-        .update({
-          status: "running",
-          started_at: new Date().toISOString(),
-        })
-        .eq("id", jobId);
-
-      // ブラウザを1回だけ起動（Playwright推奨パターン）
-      const browser = await chromium.launch({
-        headless: !debug,
-        slowMo: debug ? 200 : 0,
-        args: [
-          "--no-sandbox",
-          "--disable-setuid-sandbox",
-          "--disable-dev-shm-usage",
-          "--disable-gpu",
-          "--disable-gl-drawing-for-tests",
-          "--disable-accelerated-2d-canvas",
-          "--disable-background-timer-throttling",
-          "--disable-backgrounding-occluded-windows",
-          "--disable-renderer-backgrounding",
-          "--disable-extensions",
-          "--disable-plugins",
-          "--memory-pressure-off",
-        ],
-      });
-
-      const results: Array<{
-        leadId: string;
-        url: string;
-        success: boolean;
-        error?: string;
-      }> = [];
-
-      let completedCount = 0;
-      let failedCount = 0;
-
-      // 各アイテムを順次処理
-      for (let i = 0; i < items.length; i++) {
-        const item = items[i];
-        const leadId = leadIds[i];
-
+  // バックグラウンドで処理を実行（キューに積んで同時実行数を制限）
+  asyncJobQueue.push({
+    jobId,
+    companyId,
+    addedAt: new Date(),
+    run: async () => {
+      let browser: Browser | null = null;
+      try {
         console.log(
-          `[batch-async] [${i + 1}/${items.length}] Processing ${item.url} (leadId: ${leadId})`,
+          `[batch-async] Starting job ${jobId} with ${items.length} items`,
         );
 
-        try {
-          // 1件ごとの処理（新しいコンテキストで実行）
-          const result = await autoSubmitWithBrowser(browser, item);
+        // ジョブステータスを "running" に更新
+        await (supabase!.from("batch_jobs") as any)
+          .update({
+            status: "running",
+            started_at: new Date().toISOString(),
+          })
+          .eq("id", jobId);
 
-          if (result.success) {
-            completedCount++;
-            results.push({ leadId, url: item.url, success: true });
+        // ブラウザを1回だけ起動（リトライ付き）
+        const maxRetries = 3;
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+          try {
+            console.log(
+              `[batch-async] Launching browser (attempt ${attempt}/${maxRetries})...`,
+            );
+            browser = await chromium.launch({
+              headless: !debug,
+              slowMo: debug ? 200 : 0,
+              args: [
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-gl-drawing-for-tests",
+                "--disable-accelerated-2d-canvas",
+                "--disable-background-timer-throttling",
+                "--disable-backgrounding-occluded-windows",
+                "--disable-renderer-backgrounding",
+                "--disable-extensions",
+                "--disable-plugins",
+                "--memory-pressure-off",
+                "--single-process", // コンテナ環境での安定性向上
+              ],
+            });
+            console.log(`[batch-async] Browser launched successfully`);
+            break;
+          } catch (launchError) {
+            const msg =
+              launchError instanceof Error
+                ? launchError.message
+                : String(launchError);
+            console.error(
+              `[batch-async] Browser launch failed (attempt ${attempt}): ${msg}`,
+            );
+            if (attempt < maxRetries) {
+              // 指数バックオフで待機
+              const waitTime = Math.pow(2, attempt) * 1000;
+              console.log(
+                `[batch-async] Waiting ${waitTime}ms before retry...`,
+              );
+              await new Promise((resolve) => setTimeout(resolve, waitTime));
+            } else {
+              throw new Error(
+                `Browser launch failed after ${maxRetries} attempts: ${msg}`,
+              );
+            }
+          }
+        }
 
-            // リードのステータスを "success" に更新
-            await (supabase!.from("lead_lists") as any)
-              .update({ send_status: "success" })
-              .eq("id", leadId);
-          } else {
+        if (!browser) {
+          throw new Error("Browser launch failed");
+        }
+
+        const results: Array<{
+          leadId: string;
+          url: string;
+          success: boolean;
+          error?: string;
+        }> = [];
+
+        let completedCount = 0;
+        let failedCount = 0;
+
+        // 各アイテムを順次処理
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          const leadId = leadIds[i];
+
+          console.log(
+            `[batch-async] [${i + 1}/${items.length}] Processing ${item.url} (leadId: ${leadId})`,
+          );
+
+          try {
+            // 1件ごとの処理（新しいコンテキストで実行）
+            const result = await autoSubmitWithBrowser(browser, item);
+
+            if (result.success) {
+              completedCount++;
+              results.push({ leadId, url: item.url, success: true });
+
+              // リードのステータスを "success" に更新
+              await (supabase!.from("lead_lists") as any)
+                .update({ send_status: "success" })
+                .eq("id", leadId);
+            } else {
+              failedCount++;
+              results.push({
+                leadId,
+                url: item.url,
+                success: false,
+                error: result.note || "Unknown error",
+              });
+
+              // リードのステータスを "failed" に更新
+              await (supabase!.from("lead_lists") as any)
+                .update({ send_status: "failed" })
+                .eq("id", leadId);
+            }
+
+            // 進捗をDBに更新
+            await (supabase!.from("batch_jobs") as any)
+              .update({
+                completed_items: completedCount,
+                failed_items: failedCount,
+                results: results,
+              })
+              .eq("id", jobId);
+
+            console.log(
+              `[batch-async] [${i + 1}/${items.length}] ${item.url} - success=${result.success}`,
+            );
+          } catch (error) {
+            const message =
+              error instanceof Error ? error.message : String(error);
+            console.error(
+              `[batch-async] [${i + 1}/${items.length}] Error: ${message}`,
+            );
+
             failedCount++;
             results.push({
               leadId,
               url: item.url,
               success: false,
-              error: result.note || "Unknown error",
+              error: message,
             });
 
             // リードのステータスを "failed" に更新
             await (supabase!.from("lead_lists") as any)
               .update({ send_status: "failed" })
               .eq("id", leadId);
+
+            // 進捗をDBに更新
+            await (supabase!.from("batch_jobs") as any)
+              .update({
+                completed_items: completedCount,
+                failed_items: failedCount,
+                results: results,
+              })
+              .eq("id", jobId);
           }
+        }
 
-          // 進捗をDBに更新
-          await (supabase!.from("batch_jobs") as any)
-            .update({
-              completed_items: completedCount,
-              failed_items: failedCount,
-              results: results,
-            })
-            .eq("id", jobId);
+        // ジョブステータスを "completed" に更新
+        await (supabase!.from("batch_jobs") as any)
+          .update({
+            status: "completed",
+            completed_at: new Date().toISOString(),
+          })
+          .eq("id", jobId);
 
-          console.log(
-            `[batch-async] [${i + 1}/${items.length}] ${item.url} - success=${result.success}`,
-          );
-        } catch (error) {
-          const message =
-            error instanceof Error ? error.message : String(error);
-          console.error(
-            `[batch-async] [${i + 1}/${items.length}] Error: ${message}`,
-          );
+        console.log(
+          `[batch-async] Job ${jobId} completed: ${completedCount} success, ${failedCount} failed`,
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`[batch-async] Job ${jobId} failed: ${message}`);
 
-          failedCount++;
-          results.push({
-            leadId,
-            url: item.url,
-            success: false,
-            error: message,
+        // ジョブステータスを "failed" に更新
+        await (supabase!.from("batch_jobs") as any)
+          .update({
+            status: "failed",
+            error_message: message,
+            completed_at: new Date().toISOString(),
+          })
+          .eq("id", jobId);
+      } finally {
+        // 失敗時も含めて必ずブラウザを閉じる（リーク → EAGAIN悪化を防止）
+        if (browser) {
+          await browser.close().catch((err) => {
+            console.error(`[batch-async] Failed to close browser: ${err}`);
           });
-
-          // リードのステータスを "failed" に更新
-          await (supabase!.from("lead_lists") as any)
-            .update({ send_status: "failed" })
-            .eq("id", leadId);
-
-          // 進捗をDBに更新
-          await (supabase!.from("batch_jobs") as any)
-            .update({
-              completed_items: completedCount,
-              failed_items: failedCount,
-              results: results,
-            })
-            .eq("id", jobId);
         }
       }
+    },
+  });
 
-      // ブラウザを閉じる
-      await browser.close();
-
-      // ジョブステータスを "completed" に更新
-      await (supabase!.from("batch_jobs") as any)
-        .update({
-          status: "completed",
-          completed_at: new Date().toISOString(),
-        })
-        .eq("id", jobId);
-
-      console.log(
-        `[batch-async] Job ${jobId} completed: ${completedCount} success, ${failedCount} failed`,
-      );
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`[batch-async] Job ${jobId} failed: ${message}`);
-
-      // ジョブステータスを "failed" に更新
-      await (supabase!.from("batch_jobs") as any)
-        .update({
-          status: "failed",
-          error_message: message,
-          completed_at: new Date().toISOString(),
-        })
-        .eq("id", jobId);
-    }
-  })();
+  console.log(
+    `[batch-async/queue] Enqueued job ${jobId} (companyId=${companyId}). Queue size: ${asyncJobQueue.length}, active=${currentAsyncJobCount}/${MAX_CONCURRENT_ASYNC_JOBS}`,
+  );
+  processAsyncJobQueue();
 });
 
 // サーバー起動
