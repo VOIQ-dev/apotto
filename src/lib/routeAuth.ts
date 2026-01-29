@@ -112,13 +112,19 @@ export async function getAccountContextFromRequest(
   const companyId = account?.company_id ? String(account.company_id) : null;
 
   // セッションID検証（同時ログイン制限）
+  // 環境変数でセッション検証を無効化できるようにする
+  const sessionCheckEnabled = process.env.ENABLE_SESSION_CHECK !== "false";
+
   const cookieSessionId = request.cookies.get(SESSION_COOKIE_NAME)?.value;
   const dbSessionId = account?.current_session_id;
+
   // DBにセッションIDがない場合（マイグレーション前）は検証をスキップ
-  const sessionValid = !dbSessionId || cookieSessionId === dbSessionId;
+  // または環境変数でセッション検証が無効化されている場合もスキップ
+  const sessionValid =
+    !sessionCheckEnabled || !dbSessionId || cookieSessionId === dbSessionId;
 
   // デバッグログ
-  if (dbSessionId && cookieSessionId !== dbSessionId) {
+  if (sessionCheckEnabled && dbSessionId && cookieSessionId !== dbSessionId) {
     console.log("[routeAuth] Session mismatch detected:", {
       email,
       cookieSessionId: cookieSessionId?.slice(0, 8) + "...",

@@ -504,51 +504,104 @@ async function autoSubmitWithBrowser(
     });
 
     // Try to find a contact page link and navigate if needed
-    log(`Finding contact page link`);
-    const contactUrl = await findContactPage(page, log);
-    if (contactUrl && contactUrl !== page.url()) {
-      log(`Found contact page, navigating to: ${contactUrl}`);
-      try {
-        await page.goto(contactUrl, {
-          waitUntil: "domcontentloaded",
-          timeout: 30000,
-        });
-        log(`Contact page navigation completed`);
-      } catch (contactNavError) {
-        const msg =
-          contactNavError instanceof Error
-            ? contactNavError.message
-            : String(contactNavError);
-        log(`Contact page navigation FAILED - ${msg}`);
-      }
-      if (contactUrl.includes("#")) {
-        const hash = new URL(contactUrl).hash;
-        if (hash) {
-          const id = hash.replace("#", "");
-          const anchor = page.locator(`#${id}`);
-          if ((await anchor.count()) > 0) {
-            await anchor.scrollIntoViewIfNeeded().catch(() => {});
+    log(`Finding contact page candidates...`);
+    let contactUrls: string[] = [];
+    try {
+      contactUrls = await Promise.race([
+        findContactPageCandidates(page, log),
+        new Promise<string[]>((_, reject) =>
+          setTimeout(
+            () => reject(new Error("Candidate search timeout")),
+            15000,
+          ),
+        ),
+      ]);
+      log(`Found ${contactUrls.length} candidates to try`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`⚠️ Candidate search failed: ${msg}, using fallback paths`);
+      const url = new URL(page.url());
+      const base = `${url.protocol}//${url.host}`;
+      contactUrls = [
+        page.url(),
+        `${base}/contact`,
+        `${base}/inquiry`,
+        `${base}/toiawase`,
+      ];
+    }
+
+    let formFound = false;
+
+    // Try each candidate URL until we find a form
+    for (let i = 0; i < contactUrls.length; i++) {
+      const contactUrl = contactUrls[i];
+      log(`[Candidate ${i + 1}/${contactUrls.length}] Trying: ${contactUrl}`);
+
+      if (contactUrl === page.url()) {
+        log(`Already on this page, checking for form`);
+      } else {
+        try {
+          log(`Navigating to: ${contactUrl}`);
+          await page.goto(contactUrl, {
+            waitUntil: "domcontentloaded",
+            timeout: 15000, // 15秒に短縮
+          });
+          log(`✓ Navigation completed`);
+        } catch (contactNavError) {
+          const msg =
+            contactNavError instanceof Error
+              ? contactNavError.message
+              : String(contactNavError);
+          log(`✗ Navigation FAILED - ${msg}, trying next candidate`);
+          continue;
+        }
+
+        if (contactUrl.includes("#")) {
+          const hash = new URL(contactUrl).hash;
+          if (hash) {
+            const id = hash.replace("#", "");
+            const anchor = page.locator(`#${id}`);
+            if ((await anchor.count()) > 0) {
+              await anchor.scrollIntoViewIfNeeded().catch(() => {});
+            }
           }
         }
       }
-    } else {
-      log(`No separate contact page found, using current page`);
+
+      // Try to locate a form and fill
+      log(`Checking for form...`);
+      try {
+        const found = await Promise.race([
+          findAndFillFormAnyContext(page, payload, log),
+          new Promise<boolean | "blocked">((_, reject) =>
+            setTimeout(() => reject(new Error("Form search timeout")), 10000),
+          ),
+        ]);
+
+        if (found === "blocked") {
+          log(`Form is protected by CAPTCHA`);
+          return {
+            success: false,
+            logs,
+            finalUrl: page.url(),
+            note: "CAPTCHA detected",
+          };
+        }
+        if (found) {
+          log(`✅ SUCCESS: Form found and filled on URL: ${page.url()}`);
+          formFound = true;
+          break;
+        }
+        log(`No form found, trying next candidate`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log(`⚠️ Form search failed: ${msg}, trying next candidate`);
+        continue;
+      }
     }
 
-    // Try to locate a form and fill
-    log(`Finding and filling form`);
-    const found = await findAndFillFormAnyContext(page, payload, log);
-    if (found === "blocked") {
-      log(`Form is protected by CAPTCHA`);
-      return {
-        success: false,
-        logs,
-        finalUrl: page.url(),
-        note: "CAPTCHA detected",
-      };
-    }
-    if (!found) {
-      log(`No suitable contact form found`);
+    if (!formFound) {
+      log(`No suitable contact form found on any candidate page`);
       return {
         success: false,
         logs,
@@ -556,7 +609,6 @@ async function autoSubmitWithBrowser(
         note: "Form not found",
       };
     }
-    log(`Form found and filled`);
 
     // Try submit
     log(`Submitting form`);
@@ -775,6 +827,163 @@ function sanitizeUrl(url: string): string {
   return url;
 }
 
+async function findContactPageCandidates(
+  page: Page,
+  log: (s: string) => void,
+): Promise<string[]> {
+  const candidates: string[] = [];
+  const seen = new Set<string>();
+
+  // Always start with the current page
+  const currentUrl = page.url();
+  candidates.push(currentUrl);
+  seen.add(currentUrl);
+
+  // 1. Try explicit contact link selectors (with timeout and error handling)
+  const selectors = [
+    "a:has-text('お問い合わせ')",
+    "a:has-text('問い合わせ')",
+    "a:has-text('Contact')",
+    "a[href*='contact']",
+    "a[href*='inquiry']",
+  ];
+
+  for (const sel of selectors) {
+    try {
+      const link = page.locator(sel).first();
+      const count = await link.count().catch(() => 0);
+      if (count > 0) {
+        const href = await link
+          .getAttribute("href", { timeout: 1000 })
+          .catch(() => null);
+        if (href) {
+          const resolved = new URL(href, page.url()).toString();
+          if (!seen.has(resolved)) {
+            log(`Found contact link via selector ${sel}: ${resolved}`);
+            candidates.push(resolved);
+            seen.add(resolved);
+          }
+        }
+      }
+    } catch (err) {
+      // Selector failed, continue to next
+      log(`Selector ${sel} failed, skipping`);
+    }
+  }
+
+  // 2. Try on-page anchors (with timeout and error handling)
+  const anchorCandidates = ["contact", "toiawase", "inquiry"];
+  for (const id of anchorCandidates) {
+    try {
+      const anchor = page.locator(`#${id}`).first();
+      const count = await anchor.count().catch(() => 0);
+      if (count > 0) {
+        const withHash = new URL(`#${id}`, page.url()).toString();
+        if (!seen.has(withHash)) {
+          log(`Found on-page anchor: #${id}`);
+          candidates.push(withHash);
+          seen.add(withHash);
+        }
+      }
+    } catch (err) {
+      // Anchor check failed, continue
+      log(`Anchor check #${id} failed, skipping`);
+    }
+  }
+
+  // 3. Heuristic search through links (using locator instead of evaluate)
+  // Note: Using locator is recommended by Playwright best practices
+  // Check multiple text patterns separately
+  const textPatterns = ["contact", "inquiry", "お問い合わせ", "問い合わせ"];
+  for (const pattern of textPatterns) {
+    try {
+      const contactLinks = page.locator("a").filter({ hasText: pattern });
+      const linkCount = Math.min(await contactLinks.count().catch(() => 0), 5);
+
+      for (let i = 0; i < linkCount; i++) {
+        try {
+          const link = contactLinks.nth(i);
+          const href = await link
+            .getAttribute("href", { timeout: 1000 })
+            .catch(() => null);
+          if (href) {
+            const resolved = new URL(href, page.url()).toString();
+            if (!seen.has(resolved)) {
+              log(`Heuristic link candidate (${pattern}): ${resolved}`);
+              candidates.push(resolved);
+              seen.add(resolved);
+            }
+          }
+        } catch (err) {
+          // Link extraction failed, continue
+        }
+      }
+    } catch (err) {
+      log(`Heuristic link search for "${pattern}" failed, skipping`);
+    }
+  }
+
+  // 4. Try common path patterns
+  const url = new URL(page.url());
+  const base = `${url.protocol}//${url.host}`;
+  const pathCandidates = [
+    "/contact",
+    "/contact/",
+    "/contact-us",
+    "/contactus",
+    "/contact/ir/",
+    "/contact/other",
+    "/contact/others",
+    "/inquiry",
+    "/inquiry/",
+    "/inquiries",
+    "/inquiry/office.html",
+    "/support",
+    "/support/",
+    "/customer/support/",
+    "/toiawase",
+    "/toiawase/",
+    "/form",
+    "/form/",
+    "/form/index.php",
+    "/form/index.html",
+    "/form/index.cgi",
+    "/form/form-recruit",
+    "/company/contact",
+    "/company/contact/",
+    "/info/contact",
+    "/about/contact",
+    "/about/contact/",
+    "/ssl/contact",
+    "/ssl/cf_question/index.html",
+    "/contact_dp",
+    "/contact-ir",
+  ];
+  for (const path of pathCandidates) {
+    try {
+      const candidate = new URL(path, base).toString();
+      if (!seen.has(candidate)) {
+        candidates.push(candidate);
+        seen.add(candidate);
+      }
+    } catch (err) {
+      // Invalid URL, skip
+    }
+  }
+
+  // 候補数を制限（処理時間管理のため）
+  const maxCandidates = 20;
+  const limitedCandidates = candidates.slice(0, maxCandidates);
+
+  log(
+    `📋 Found ${candidates.length} contact page candidates, trying first ${limitedCandidates.length}:`,
+  );
+  limitedCandidates.forEach((url, i) => {
+    log(`  [${i + 1}] ${url}`);
+  });
+  return limitedCandidates;
+}
+
 async function findContactPage(
   page: Page,
   log: (s: string) => void,
@@ -862,12 +1071,32 @@ async function findContactPage(
     "/contact/",
     "/contact-us",
     "/contactus",
+    "/contact/ir/",
+    "/contact/other",
+    "/contact/others",
     "/inquiry",
+    "/inquiry/",
     "/inquiries",
+    "/inquiry/office.html",
     "/support",
+    "/support/",
+    "/customer/support/",
     "/toiawase",
+    "/toiawase/",
+    "/form",
+    "/form/",
+    "/form/index.php",
+    "/form/index.html",
+    "/form/index.cgi",
     "/company/contact",
+    "/company/contact/",
     "/info/contact",
+    "/about/contact",
+    "/about/contact/",
+    "/ssl/contact",
+    "/ssl/cf_question/index.html",
+    "/contact_dp",
+    "/contact-ir",
   ];
   for (const path of pathCandidates) {
     const candidate = new URL(path, base).toString();
@@ -951,7 +1180,12 @@ async function findAndFillForm(
     }
   }
 
-  if (!formFound) return false;
+  if (!formFound) {
+    log(`❌ No form found on this page`);
+    return false;
+  }
+
+  log(`✓ Form found, checking for CAPTCHA...`);
 
   // reCAPTCHA / hCaptcha 検出
   const captchaSelectors = [
@@ -1998,6 +2232,7 @@ async function findAndFillForm(
     }
   }
 
+  log(`✅ Form filling completed successfully`);
   return true;
 }
 
@@ -2054,14 +2289,17 @@ async function submitForm(
     "div button[type='submit']",
   ];
 
+  log(`🔍 Searching for submit button...`);
+
   for (const sel of buttonSelectors) {
     const btn = page.locator(sel).first();
     if ((await btn.count()) > 0) {
+      log(`✓ Found submit button: ${sel}`);
       try {
         // disabled属性を一時的に削除してクリックを試みる
         const isDisabled = await btn.isDisabled().catch(() => false);
         if (isDisabled) {
-          log(`Button is disabled, attempting to enable: ${sel}`);
+          log(`⚠️ Button is disabled, attempting to enable...`);
           await btn
             .evaluate((el) => {
               if (
@@ -2075,29 +2313,69 @@ async function submitForm(
         }
 
         const urlBefore = page.url();
-        log(`Current URL before submit: ${urlBefore}`);
+        log(`📍 Current URL before submit: ${urlBefore}`);
 
         // 送信ボタンをクリック
+        log(`🖱️ Clicking submit button...`);
         await Promise.all([
           page
             .waitForNavigation({ waitUntil: "domcontentloaded", timeout: 5000 })
             .catch(() => {}),
           btn.click({ timeout: 3000 }).catch(() => {}),
         ]);
-        log(`Clicked submit via ${sel}`);
+        log(`✅ Submit button clicked successfully`);
 
         // クリック後に短時間待機（Ajax処理やDOM更新のため）
         await page.waitForTimeout(500);
+
+        const urlAfter = page.url();
+        log(`URL after click: ${urlAfter}`);
+
+        // 確認画面の判定（ページ内容とボタンで判定）
+        const pageText = await page
+          .locator("body")
+          .textContent()
+          .catch(() => "");
+        const confirmationKeywords = [
+          "入力内容の確認",
+          "入力内容をご確認",
+          "内容確認",
+          "確認画面",
+          "ご確認ください",
+          "以下の内容で送信",
+          "この内容で送信",
+          "Confirm your input",
+          "Please confirm",
+        ];
+        const isConfirmationPage = confirmationKeywords.some((kw) =>
+          pageText.includes(kw),
+        );
+
+        if (isConfirmationPage) {
+          log(`📋 Confirmation page detected by content (URL: ${urlAfter})`);
+        }
 
         // 確認画面の判定（最終送信ボタンがあるか）
         const confirmationSelectors = [
           "button:has-text('送信')",
           "button:has-text('送る')",
+          "button:has-text('送信する')",
+          "button:has-text('この内容で送信')",
+          "button:has-text('確定')",
+          "button:has-text('Submit')",
+          "button:has-text('Send')",
           "input[type='submit'][value*='送信']",
           "input[type='button'][value*='送信']",
+          "input[type='submit'][value*='確定']",
+          "input[type='button'][value*='確定']",
+          "input[type='submit'][value*='Submit']",
+          "input[type='submit'][value*='Send']",
           ".wpcf7-form-button",
           "input.hs-button",
           "button.hs-button",
+          "button.submit-button",
+          "button.btn-submit",
+          ".submit-btn",
         ];
 
         let finalBtn = null;
@@ -2110,7 +2388,7 @@ async function submitForm(
         }
 
         if (finalBtn) {
-          log("Confirmation page detected, clicking final submit");
+          log(`📋 Final submit button found on confirmation page, clicking...`);
           const urlBeforeFinal = page.url();
 
           await Promise.all([
@@ -2151,7 +2429,7 @@ async function submitForm(
     }
   }
 
-  log("No submit button found");
+  log("❌ No submit button found on this page");
   return false;
 }
 
@@ -2165,7 +2443,8 @@ async function verifySubmissionSuccess(
 ): Promise<boolean> {
   const urlAfter = page.url();
   const urlChanged = urlAfter !== urlBefore;
-  log(`URL after submit: ${urlAfter} (changed: ${urlChanged})`);
+  log(`📍 URL after submit: ${urlAfter} (changed: ${urlChanged})`);
+  log(`🔍 Verifying submission success...`);
 
   // 0. ダイアログで成功メッセージが表示された場合
   if (dialogDetected && dialogMessage) {
@@ -2217,9 +2496,10 @@ async function verifySubmissionSuccess(
     .catch(() => "");
 
   const pageTextLower = pageText.toLowerCase();
-  log(`Page text length: ${pageText.length} characters`);
+  log(`📄 Page text length: ${pageText.length} characters`);
 
   // 2. エラーキーワードチェック（優先）
+  log(`🔍 Checking for error keywords...`);
   const errorKeywords = [
     // 日本語
     "必須項目",
@@ -2246,21 +2526,30 @@ async function verifySubmissionSuccess(
       return false;
     }
   }
+  log(`✓ No error keywords found`);
 
   // 3. 成功キーワードチェック
+  log(`🔍 Checking for success keywords...`);
   const successKeywords = [
     // 日本語
     "ありがとうございました",
     "ありがとうございます",
     "お問い合わせを受け付けました",
+    "お問い合わせいただきありがとう",
     "送信完了",
     "送信しました",
+    "送信が完了しました",
     "送信が完了",
+    "送信されました",
     "受け付けました",
     "受付完了",
     "完了しました",
     "お問い合わせいただき",
     "送信いただき",
+    "お送りいただき",
+    "承りました",
+    "受信しました",
+    "受領しました",
     // 英語
     "thank you",
     "thanks for",
@@ -2270,6 +2559,8 @@ async function verifySubmissionSuccess(
     "request received",
     "submission successful",
     "form submitted",
+    "message has been sent",
+    "your message has been",
   ];
 
   for (const keyword of successKeywords) {

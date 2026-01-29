@@ -1,8 +1,20 @@
 import express from "express";
 import cors from "cors";
 import { chromium } from "playwright";
+import { createClient } from "@supabase/supabase-js";
 const app = express();
 const PORT = process.env.PORT || 3001;
+// Supabase クライアント（Service Role キー使用）
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+let supabase = null;
+if (supabaseUrl && supabaseServiceKey) {
+    supabase = createClient(supabaseUrl, supabaseServiceKey);
+    console.log("[server] Supabase client initialized");
+}
+else {
+    console.warn("[server] NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not set - batch job features disabled");
+}
 // CORS設定（Vercelからのリクエストを許可）
 app.use(cors({
     origin: process.env.ALLOWED_ORIGINS?.split(",") || [
@@ -12,12 +24,77 @@ app.use(cors({
     credentials: true,
 }));
 // ペイロードサイズ制限を50MBに拡張（100件バッチ処理対応）
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ limit: "50mb", extended: true }));
+app.use(express.json({ limit: "500mb" }));
+app.use(express.urlencoded({ limit: "500mb", extended: true }));
 // ヘルスチェック
 app.get("/health", (_req, res) => {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
+// キューステータス確認エンドポイント
+app.get("/queue-status", (_req, res) => {
+    res.json({
+        queueLength: sendQueue.length,
+        activeBrowsers: currentBrowserCount,
+        maxBrowsers: MAX_CONCURRENT_BROWSERS,
+        availableSlots: MAX_CONCURRENT_BROWSERS - currentBrowserCount,
+        asyncQueueLength: asyncJobQueue.length,
+        activeAsyncJobs: currentAsyncJobCount,
+        maxAsyncJobs: MAX_CONCURRENT_ASYNC_JOBS,
+        queueItems: sendQueue.map((item) => ({
+            companyId: item.companyId,
+            itemCount: item.items.length,
+            waitingSeconds: Math.floor((Date.now() - item.addedAt.getTime()) / 1000),
+        })),
+    });
+});
+// ===== 同時実行制御のための変数 =====
+// Railway/Docker環境ではリソース制限があるため1に設定
+const MAX_CONCURRENT_BROWSERS = 1;
+let currentBrowserCount = 0; // 現在実行中のブラウザ数
+console.log(`[server] Starting with MAX_CONCURRENT_BROWSERS=${MAX_CONCURRENT_BROWSERS} (serial processing for stability)`);
+const sendQueue = [];
+let isProcessingQueue = false;
+// ===== batch-async 用の同時実行制御（EAGAIN対策）=====
+// NOTE: Railway ではメモリ/CPUより先に PID/FD 上限で spawn が失敗（EAGAIN）することがある。
+// batch-async はリクエスト毎にバックグラウンド処理を起動するため、明示的にキューで直列化する。
+// env ではなくコード側で固定（まずは安定性優先で1）
+const MAX_CONCURRENT_ASYNC_JOBS = 1;
+let currentAsyncJobCount = 0;
+let isProcessingAsyncQueue = false;
+const asyncJobQueue = [];
+async function processAsyncJobQueue() {
+    if (isProcessingAsyncQueue)
+        return;
+    if (asyncJobQueue.length === 0)
+        return;
+    if (currentAsyncJobCount >= MAX_CONCURRENT_ASYNC_JOBS)
+        return;
+    isProcessingAsyncQueue = true;
+    try {
+        while (asyncJobQueue.length > 0 &&
+            currentAsyncJobCount < MAX_CONCURRENT_ASYNC_JOBS) {
+            const item = asyncJobQueue.shift();
+            if (!item)
+                break;
+            currentAsyncJobCount++;
+            const waitedSec = Math.floor((Date.now() - item.addedAt.getTime()) / 1000);
+            console.log(`[batch-async/queue] Dequeued job ${item.jobId} (companyId=${item.companyId}, waited=${waitedSec}s). Active async jobs: ${currentAsyncJobCount}/${MAX_CONCURRENT_ASYNC_JOBS}`);
+            item
+                .run()
+                .catch((err) => {
+                console.error(`[batch-async/queue] Job ${item.jobId} crashed: ${err instanceof Error ? err.message : String(err)}`);
+            })
+                .finally(() => {
+                currentAsyncJobCount--;
+                console.log(`[batch-async/queue] Job ${item.jobId} finished. Active async jobs: ${currentAsyncJobCount}/${MAX_CONCURRENT_ASYNC_JOBS}`);
+                setTimeout(() => processAsyncJobQueue(), 100);
+            });
+        }
+    }
+    finally {
+        isProcessingAsyncQueue = false;
+    }
+}
 // メインのauto-submitエンドポイント（単一送信）
 app.post("/auto-submit", async (req, res) => {
     const payload = req.body;
@@ -48,7 +125,206 @@ app.post("/auto-submit", async (req, res) => {
         });
     }
 });
-// バッチ送信エンドポイント（複数URL連続処理、SSEでストリーミング）
+// キュー処理関数
+async function processQueue() {
+    if (isProcessingQueue || sendQueue.length === 0)
+        return;
+    // 同時実行数チェック
+    if (currentBrowserCount >= MAX_CONCURRENT_BROWSERS) {
+        console.log(`[queue] Maximum browsers (${MAX_CONCURRENT_BROWSERS}) reached, waiting...`);
+        return;
+    }
+    isProcessingQueue = true;
+    try {
+        while (sendQueue.length > 0 &&
+            currentBrowserCount < MAX_CONCURRENT_BROWSERS) {
+            const queueItem = sendQueue.shift();
+            if (!queueItem)
+                break;
+            currentBrowserCount++;
+            const waitTime = Math.floor((Date.now() - queueItem.addedAt.getTime()) / 1000);
+            console.log(`[queue] Processing request (waited ${waitTime}s). Active browsers: ${currentBrowserCount}/${MAX_CONCURRENT_BROWSERS}`);
+            // 非同期でバッチ処理を実行（並列処理）
+            executeBatch(queueItem).finally(() => {
+                currentBrowserCount--;
+                console.log(`[queue] Request completed. Active browsers: ${currentBrowserCount}/${MAX_CONCURRENT_BROWSERS}`);
+                // 次のキューアイテムを処理
+                setTimeout(() => processQueue(), 100);
+            });
+        }
+    }
+    finally {
+        isProcessingQueue = false;
+    }
+}
+// 実際のバッチ処理実行（Playwright推奨: 1ブラウザ + 各アイテムで新しいコンテキスト）
+async function executeBatch(queueItem) {
+    const { res, items, debug, companyId } = queueItem;
+    // SSE接続が切断されたかチェック
+    let connectionClosed = false;
+    res.on("close", () => {
+        connectionClosed = true;
+        console.log(`[executeBatch] Client disconnected for company ${companyId}`);
+    });
+    let browser = null;
+    try {
+        console.log(`[executeBatch] Starting batch for company ${companyId}: ${items.length} items`);
+        res.write(`data: ${JSON.stringify({ type: "batch_start", queuePosition: 0 })}\n\n`);
+        // バッチ全体で1つのブラウザを起動（リトライ付き）
+        console.log(`[executeBatch] Launching single browser for entire batch`);
+        const maxLaunchRetries = 3;
+        for (let attempt = 1; attempt <= maxLaunchRetries; attempt++) {
+            try {
+                browser = await chromium.launch({
+                    headless: !debug,
+                    slowMo: debug ? 200 : 0,
+                    args: [
+                        "--no-sandbox",
+                        "--disable-setuid-sandbox",
+                        "--disable-dev-shm-usage",
+                        "--disable-gpu",
+                        "--disable-gl-drawing-for-tests",
+                        "--disable-accelerated-2d-canvas",
+                        "--disable-background-timer-throttling",
+                        "--disable-backgrounding-occluded-windows",
+                        "--disable-renderer-backgrounding",
+                        "--disable-extensions",
+                        "--disable-plugins",
+                        "--memory-pressure-off",
+                        "--single-process",
+                    ],
+                });
+                console.log(`[executeBatch] Browser launched successfully`);
+                break;
+            }
+            catch (launchError) {
+                const msg = launchError instanceof Error ? launchError.message : String(launchError);
+                console.error(`[executeBatch] Browser launch failed (attempt ${attempt}): ${msg}`);
+                if (attempt < maxLaunchRetries) {
+                    await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+                }
+                else {
+                    throw new Error(`Browser launch failed after ${maxLaunchRetries} attempts: ${msg}`);
+                }
+            }
+        }
+        if (!browser) {
+            throw new Error("Browser launch failed");
+        }
+        res.write(`data: ${JSON.stringify({ type: "browser_ready" })}\n\n`);
+        // 各アイテムを順次処理（各アイテムで新しいコンテキストを作成）
+        for (let i = 0; i < items.length; i++) {
+            // SSE接続が切断されていたら処理中断
+            if (connectionClosed) {
+                console.log(`[executeBatch] Connection closed, aborting batch at item ${i + 1}/${items.length}`);
+                break;
+            }
+            const payload = items[i];
+            try {
+                // 処理開始を通知
+                try {
+                    res.write(`data: ${JSON.stringify({
+                        type: "item_start",
+                        index: i,
+                        url: payload.url,
+                    })}\n\n`);
+                }
+                catch (writeError) {
+                    console.error(`[executeBatch] Failed to write item_start, connection may be closed`);
+                    break;
+                }
+                console.log(`[auto-submit/batch] [${i + 1}/${items.length}] Processing ${payload.url}`);
+                // フォーム送信処理（内部で新しいコンテキストを作成・破棄）
+                const result = await autoSubmitWithBrowser(browser, payload);
+                // 詳細ログ出力
+                console.log(`[auto-submit/batch] [${i + 1}/${items.length}] ${payload.url} - success=${result.success}`);
+                if (!result.success) {
+                    console.log(`[auto-submit/batch] [${i + 1}/${items.length}] Failure reason: ${result.note || "Unknown"}`);
+                    console.log(`[auto-submit/batch] [${i + 1}/${items.length}] Error logs:\n${result.logs.slice(-5).join("\n")}`);
+                }
+                // 処理完了を通知
+                try {
+                    res.write(`data: ${JSON.stringify({
+                        type: "item_complete",
+                        index: i,
+                        url: payload.url,
+                        success: result.success,
+                        logs: result.logs,
+                        finalUrl: result.finalUrl,
+                        note: result.note,
+                    })}\n\n`);
+                }
+                catch (writeError) {
+                    console.error(`[executeBatch] Failed to write item_complete, connection may be closed`);
+                    break;
+                }
+            }
+            catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                const stack = error instanceof Error ? error.stack : undefined;
+                console.error(`[auto-submit/batch] [${i + 1}/${items.length}] Error: ${message}`);
+                if (stack) {
+                    console.error(`[auto-submit/batch] [${i + 1}/${items.length}] Stack trace: ${stack.split("\n").slice(0, 3).join(" | ")}`);
+                }
+                // ブラウザクラッシュの場合はバッチ全体を中断
+                const isFatalError = message.includes("Browser closed") ||
+                    message.includes("Protocol error");
+                try {
+                    res.write(`data: ${JSON.stringify({
+                        type: "item_error",
+                        index: i,
+                        url: payload.url,
+                        error: message,
+                        fatal: isFatalError,
+                    })}\n\n`);
+                }
+                catch (writeError) {
+                    console.error(`[executeBatch] Failed to write item_error, connection may be closed`);
+                    break;
+                }
+                if (isFatalError) {
+                    console.error(`[executeBatch] Fatal browser error, aborting batch at item ${i + 1}/${items.length}`);
+                    break;
+                }
+            }
+        }
+        // 全完了を通知
+        if (!connectionClosed) {
+            console.log(`[executeBatch] Batch completed for company ${companyId}: ${items.length} items processed`);
+            try {
+                res.write(`data: ${JSON.stringify({ type: "batch_complete", total: items.length })}\n\n`);
+            }
+            catch (writeError) {
+                console.error(`[executeBatch] Failed to write batch_complete, connection already closed`);
+            }
+        }
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`[executeBatch] Fatal error for company ${companyId}: ${message}`);
+        if (!connectionClosed) {
+            try {
+                res.write(`data: ${JSON.stringify({ type: "fatal_error", error: message })}\n\n`);
+            }
+            catch (writeError) {
+                console.error(`[executeBatch] Failed to write fatal_error, connection already closed`);
+            }
+        }
+    }
+    finally {
+        // バッチ終了時にブラウザを確実にクローズ
+        if (browser) {
+            await browser.close().catch((err) => {
+                console.error(`[executeBatch] Failed to close browser: ${err}`);
+            });
+            console.log(`[executeBatch] Browser closed successfully`);
+        }
+        if (!connectionClosed) {
+            res.end();
+        }
+    }
+}
+// 新しいバッチ送信エンドポイント（キューイング対応）
 app.post("/auto-submit/batch", async (req, res) => {
     const { items, debug } = req.body;
     if (!items || !Array.isArray(items) || items.length === 0) {
@@ -56,79 +332,39 @@ app.post("/auto-submit/batch", async (req, res) => {
             error: "items array is required",
         });
     }
+    // リクエスト元の企業識別（IPアドレスやヘッダーから取得可能）
+    const companyId = req.headers["x-company-id"] ||
+        req.ip ||
+        `company_${Date.now()}`;
+    // 現在のキューサイズ確認
+    const queueLength = sendQueue.length;
+    const estimatedWaitTime = Math.ceil((queueLength * 50) / MAX_CONCURRENT_BROWSERS); // 大雑把な見積もり
+    // キューに追加
+    const queueItem = {
+        req,
+        res,
+        items,
+        debug: debug || false,
+        companyId,
+        addedAt: new Date(),
+    };
+    sendQueue.push(queueItem);
+    console.log(`[queue] Request from ${companyId} added. Queue size: ${sendQueue.length}, Estimated wait: ${estimatedWaitTime}s`);
     // SSE設定
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders();
-    let browser = null;
-    try {
-        // 1つのブラウザインスタンスを起動
-        browser = await chromium.launch({
-            headless: !debug,
-            slowMo: debug ? 200 : 0,
-            args: [
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-            ],
-        });
-        res.write(`data: ${JSON.stringify({ type: "browser_ready" })}\n\n`);
-        // 各アイテムを順次処理
-        for (let i = 0; i < items.length; i++) {
-            const payload = items[i];
-            const itemId = payload.url;
-            // 処理開始を通知
-            res.write(`data: ${JSON.stringify({
-                type: "item_start",
-                index: i,
-                url: payload.url,
-            })}\n\n`);
-            try {
-                const result = await autoSubmitWithBrowser(browser, payload);
-                // ローカルログ出力
-                console.log(`[auto-submit/batch] ${i + 1}/${items.length} ${payload.url} - success=${result.success}`);
-                if (!result.success) {
-                    console.log(`[auto-submit/batch] Failure reason: ${result.note || "Unknown"}`);
-                    console.log(`[auto-submit/batch] Logs:\n${result.logs.join("\n")}`);
-                }
-                // 処理完了を通知
-                res.write(`data: ${JSON.stringify({
-                    type: "item_complete",
-                    index: i,
-                    url: payload.url,
-                    success: result.success,
-                    logs: result.logs,
-                    finalUrl: result.finalUrl,
-                    note: result.note,
-                })}\n\n`);
-            }
-            catch (error) {
-                const message = error instanceof Error ? error.message : String(error);
-                res.write(`data: ${JSON.stringify({
-                    type: "item_error",
-                    index: i,
-                    url: payload.url,
-                    error: message,
-                })}\n\n`);
-                console.error(`[auto-submit/batch] Error ${i + 1}/${items.length}: ${message}`);
-            }
-        }
-        // 全完了を通知
-        res.write(`data: ${JSON.stringify({ type: "batch_complete", total: items.length })}\n\n`);
-    }
-    catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.error(`[auto-submit/batch] Fatal error: ${message}`);
-        res.write(`data: ${JSON.stringify({ type: "fatal_error", error: message })}\n\n`);
-    }
-    finally {
-        if (browser) {
-            await browser.close();
-        }
-        res.end();
-    }
+    // キュー情報を送信
+    res.write(`data: ${JSON.stringify({
+        type: "queued",
+        position: queueLength,
+        estimatedWaitTime,
+        activeBrowsers: currentBrowserCount,
+        maxBrowsers: MAX_CONCURRENT_BROWSERS,
+    })}\n\n`);
+    // キュー処理を開始
+    processQueue();
 });
 // 既存ブラウザを使ったフォーム送信（バッチ用）
 async function autoSubmitWithBrowser(browser, payload) {
@@ -141,10 +377,11 @@ async function autoSubmitWithBrowser(browser, payload) {
     }
     log(`=== autoSubmit START ===`);
     log(`Payload: url=${payload.url}, company=${payload.company}`);
+    let context = null;
     let page = null;
     try {
-        log(`Creating new page`);
-        const context = await browser.newContext();
+        log(`Creating new context and page`);
+        context = await browser.newContext();
         page = await context.newPage();
         log(`Page created successfully`);
         const startUrl = sanitizeUrl(payload.url);
@@ -170,51 +407,93 @@ async function autoSubmitWithBrowser(browser, payload) {
             log(`networkidle timeout (non-fatal)`);
         });
         // Try to find a contact page link and navigate if needed
-        log(`Finding contact page link`);
-        const contactUrl = await findContactPage(page, log);
-        if (contactUrl && contactUrl !== page.url()) {
-            log(`Found contact page, navigating to: ${contactUrl}`);
-            try {
-                await page.goto(contactUrl, {
-                    waitUntil: "domcontentloaded",
-                    timeout: 30000,
-                });
-                log(`Contact page navigation completed`);
+        log(`Finding contact page candidates...`);
+        let contactUrls = [];
+        try {
+            contactUrls = await Promise.race([
+                findContactPageCandidates(page, log),
+                new Promise((_, reject) => setTimeout(() => reject(new Error("Candidate search timeout")), 15000)),
+            ]);
+            log(`Found ${contactUrls.length} candidates to try`);
+        }
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            log(`⚠️ Candidate search failed: ${msg}, using fallback paths`);
+            const url = new URL(page.url());
+            const base = `${url.protocol}//${url.host}`;
+            contactUrls = [
+                page.url(),
+                `${base}/contact`,
+                `${base}/inquiry`,
+                `${base}/toiawase`,
+            ];
+        }
+        let formFound = false;
+        // Try each candidate URL until we find a form
+        for (let i = 0; i < contactUrls.length; i++) {
+            const contactUrl = contactUrls[i];
+            log(`[Candidate ${i + 1}/${contactUrls.length}] Trying: ${contactUrl}`);
+            if (contactUrl === page.url()) {
+                log(`Already on this page, checking for form`);
             }
-            catch (contactNavError) {
-                const msg = contactNavError instanceof Error
-                    ? contactNavError.message
-                    : String(contactNavError);
-                log(`Contact page navigation FAILED - ${msg}`);
-            }
-            if (contactUrl.includes("#")) {
-                const hash = new URL(contactUrl).hash;
-                if (hash) {
-                    const id = hash.replace("#", "");
-                    const anchor = page.locator(`#${id}`);
-                    if ((await anchor.count()) > 0) {
-                        await anchor.scrollIntoViewIfNeeded().catch(() => { });
+            else {
+                try {
+                    log(`Navigating to: ${contactUrl}`);
+                    await page.goto(contactUrl, {
+                        waitUntil: "domcontentloaded",
+                        timeout: 15000, // 15秒に短縮
+                    });
+                    log(`✓ Navigation completed`);
+                }
+                catch (contactNavError) {
+                    const msg = contactNavError instanceof Error
+                        ? contactNavError.message
+                        : String(contactNavError);
+                    log(`✗ Navigation FAILED - ${msg}, trying next candidate`);
+                    continue;
+                }
+                if (contactUrl.includes("#")) {
+                    const hash = new URL(contactUrl).hash;
+                    if (hash) {
+                        const id = hash.replace("#", "");
+                        const anchor = page.locator(`#${id}`);
+                        if ((await anchor.count()) > 0) {
+                            await anchor.scrollIntoViewIfNeeded().catch(() => { });
+                        }
                     }
                 }
             }
+            // Try to locate a form and fill
+            log(`Checking for form...`);
+            try {
+                const found = await Promise.race([
+                    findAndFillFormAnyContext(page, payload, log),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error("Form search timeout")), 10000)),
+                ]);
+                if (found === "blocked") {
+                    log(`Form is protected by CAPTCHA`);
+                    return {
+                        success: false,
+                        logs,
+                        finalUrl: page.url(),
+                        note: "CAPTCHA detected",
+                    };
+                }
+                if (found) {
+                    log(`✅ SUCCESS: Form found and filled on URL: ${page.url()}`);
+                    formFound = true;
+                    break;
+                }
+                log(`No form found, trying next candidate`);
+            }
+            catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                log(`⚠️ Form search failed: ${msg}, trying next candidate`);
+                continue;
+            }
         }
-        else {
-            log(`No separate contact page found, using current page`);
-        }
-        // Try to locate a form and fill
-        log(`Finding and filling form`);
-        const found = await findAndFillFormAnyContext(page, payload, log);
-        if (found === "blocked") {
-            log(`Form is protected by CAPTCHA`);
-            return {
-                success: false,
-                logs,
-                finalUrl: page.url(),
-                note: "CAPTCHA detected",
-            };
-        }
-        if (!found) {
-            log(`No suitable contact form found`);
+        if (!formFound) {
+            log(`No suitable contact form found on any candidate page`);
             return {
                 success: false,
                 logs,
@@ -222,23 +501,32 @@ async function autoSubmitWithBrowser(browser, payload) {
                 note: "Form not found",
             };
         }
-        log(`Form found and filled`);
         // Try submit
         log(`Submitting form`);
         const submitted = await submitFormAnyContext(page, log);
         log(submitted ? `Form submitted successfully` : `Form submission FAILED`);
         const finalUrl = page.url();
         log(`=== autoSubmit END === success=${submitted}, finalUrl=${finalUrl}`);
-        // ページを閉じる（ブラウザは維持）
-        await page.close().catch(() => { });
         return { success: submitted, logs, finalUrl };
     }
     catch (error) {
         const message = error instanceof Error ? error.message : String(error ?? "Unknown error");
         log(`UNEXPECTED ERROR: ${message}`);
-        if (page)
-            await page.close().catch(() => { });
         return { success: false, logs, finalUrl: page?.url(), note: message };
+    }
+    finally {
+        // リソースの確実なクリーンアップ（メモリリーク防止）
+        log(`Cleaning up resources (page and context)`);
+        if (page) {
+            await page.close().catch((err) => {
+                log(`Warning: Failed to close page: ${err}`);
+            });
+        }
+        if (context) {
+            await context.close().catch((err) => {
+                log(`Warning: Failed to close context: ${err}`);
+            });
+        }
     }
 }
 // autoSubmit関数
@@ -253,6 +541,7 @@ async function autoSubmit(payload) {
     log(`=== autoSubmit START ===`);
     log(`Payload: url=${payload.url}, company=${payload.company}, department=${payload.department}, title=${payload.title}, email=${payload.email}`);
     let browser = null;
+    let context = null;
     let page = null;
     try {
         log(`Step 1: Launching browser (headless=${!payload.debug})`);
@@ -265,6 +554,15 @@ async function autoSubmit(payload) {
                     "--disable-setuid-sandbox",
                     "--disable-dev-shm-usage",
                     "--disable-gpu",
+                    "--disable-gl-drawing-for-tests",
+                    "--disable-accelerated-2d-canvas",
+                    "--disable-background-timer-throttling",
+                    "--disable-backgrounding-occluded-windows",
+                    "--disable-renderer-backgrounding",
+                    "--disable-extensions",
+                    "--disable-plugins",
+                    "--memory-pressure-off",
+                    "--single-process",
                 ],
             });
             log(`Step 1: Browser launched successfully`);
@@ -277,7 +575,7 @@ async function autoSubmit(payload) {
             return { success: false, logs, note: `Browser launch failed: ${msg}` };
         }
         log(`Step 2: Creating browser context and page`);
-        const context = await browser.newContext();
+        context = await browser.newContext();
         page = await context.newPage();
         log(`Step 2: Page created successfully`);
         const startUrl = sanitizeUrl(payload.url);
@@ -376,15 +674,172 @@ async function autoSubmit(payload) {
         return { success: false, logs, finalUrl: page?.url(), note: message };
     }
     finally {
-        log(`Closing browser`);
-        if (browser)
-            await browser.close();
+        // リソースの確実なクリーンアップ
+        log(`Cleaning up resources`);
+        if (page) {
+            await page.close().catch((err) => {
+                log(`Warning: Failed to close page: ${err}`);
+            });
+        }
+        if (context) {
+            await context.close().catch((err) => {
+                log(`Warning: Failed to close context: ${err}`);
+            });
+        }
+        if (browser) {
+            await browser.close().catch((err) => {
+                log(`Warning: Failed to close browser: ${err}`);
+            });
+        }
     }
 }
 function sanitizeUrl(url) {
     if (!/^https?:\/\//i.test(url))
         return `https://${url}`;
     return url;
+}
+async function findContactPageCandidates(page, log) {
+    const candidates = [];
+    const seen = new Set();
+    // Always start with the current page
+    const currentUrl = page.url();
+    candidates.push(currentUrl);
+    seen.add(currentUrl);
+    // 1. Try explicit contact link selectors (with timeout and error handling)
+    const selectors = [
+        "a:has-text('お問い合わせ')",
+        "a:has-text('問い合わせ')",
+        "a:has-text('Contact')",
+        "a[href*='contact']",
+        "a[href*='inquiry']",
+    ];
+    for (const sel of selectors) {
+        try {
+            const link = page.locator(sel).first();
+            const count = await link.count().catch(() => 0);
+            if (count > 0) {
+                const href = await link.getAttribute("href", { timeout: 1000 }).catch(() => null);
+                if (href) {
+                    const resolved = new URL(href, page.url()).toString();
+                    if (!seen.has(resolved)) {
+                        log(`Found contact link via selector ${sel}: ${resolved}`);
+                        candidates.push(resolved);
+                        seen.add(resolved);
+                    }
+                }
+            }
+        }
+        catch (err) {
+            // Selector failed, continue to next
+            log(`Selector ${sel} failed, skipping`);
+        }
+    }
+    // 2. Try on-page anchors (with timeout and error handling)
+    const anchorCandidates = ["contact", "toiawase", "inquiry"];
+    for (const id of anchorCandidates) {
+        try {
+            const anchor = page.locator(`#${id}`).first();
+            const count = await anchor.count().catch(() => 0);
+            if (count > 0) {
+                const withHash = new URL(`#${id}`, page.url()).toString();
+                if (!seen.has(withHash)) {
+                    log(`Found on-page anchor: #${id}`);
+                    candidates.push(withHash);
+                    seen.add(withHash);
+                }
+            }
+        }
+        catch (err) {
+            // Anchor check failed, continue
+            log(`Anchor check #${id} failed, skipping`);
+        }
+    }
+    // 3. Heuristic search through links (using locator instead of evaluate)
+    // Note: Using locator is recommended by Playwright best practices
+    // Check multiple text patterns separately
+    const textPatterns = ["contact", "inquiry", "お問い合わせ", "問い合わせ"];
+    for (const pattern of textPatterns) {
+        try {
+            const contactLinks = page.locator("a").filter({ hasText: pattern });
+            const linkCount = Math.min(await contactLinks.count().catch(() => 0), 5);
+            for (let i = 0; i < linkCount; i++) {
+                try {
+                    const link = contactLinks.nth(i);
+                    const href = await link.getAttribute("href", { timeout: 1000 }).catch(() => null);
+                    if (href) {
+                        const resolved = new URL(href, page.url()).toString();
+                        if (!seen.has(resolved)) {
+                            log(`Heuristic link candidate (${pattern}): ${resolved}`);
+                            candidates.push(resolved);
+                            seen.add(resolved);
+                        }
+                    }
+                }
+                catch (err) {
+                    // Link extraction failed, continue
+                }
+            }
+        }
+        catch (err) {
+            log(`Heuristic link search for "${pattern}" failed, skipping`);
+        }
+    }
+    // 4. Try common path patterns
+    const url = new URL(page.url());
+    const base = `${url.protocol}//${url.host}`;
+    const pathCandidates = [
+        "/contact",
+        "/contact/",
+        "/contact-us",
+        "/contactus",
+        "/contact/ir/",
+        "/contact/other",
+        "/contact/others",
+        "/inquiry",
+        "/inquiry/",
+        "/inquiries",
+        "/inquiry/office.html",
+        "/support",
+        "/support/",
+        "/customer/support/",
+        "/toiawase",
+        "/toiawase/",
+        "/form",
+        "/form/",
+        "/form/index.php",
+        "/form/index.html",
+        "/form/index.cgi",
+        "/form/form-recruit",
+        "/company/contact",
+        "/company/contact/",
+        "/info/contact",
+        "/about/contact",
+        "/about/contact/",
+        "/ssl/contact",
+        "/ssl/cf_question/index.html",
+        "/contact_dp",
+        "/contact-ir",
+    ];
+    for (const path of pathCandidates) {
+        try {
+            const candidate = new URL(path, base).toString();
+            if (!seen.has(candidate)) {
+                candidates.push(candidate);
+                seen.add(candidate);
+            }
+        }
+        catch (err) {
+            // Invalid URL, skip
+        }
+    }
+    // 候補数を制限（処理時間管理のため）
+    const maxCandidates = 20;
+    const limitedCandidates = candidates.slice(0, maxCandidates);
+    log(`📋 Found ${candidates.length} contact page candidates, trying first ${limitedCandidates.length}:`);
+    limitedCandidates.forEach((url, i) => {
+        log(`  [${i + 1}] ${url}`);
+    });
+    return limitedCandidates;
 }
 async function findContactPage(page, log) {
     const selectors = [
@@ -466,12 +921,32 @@ async function findContactPage(page, log) {
         "/contact/",
         "/contact-us",
         "/contactus",
+        "/contact/ir/",
+        "/contact/other",
+        "/contact/others",
         "/inquiry",
+        "/inquiry/",
         "/inquiries",
+        "/inquiry/office.html",
         "/support",
+        "/support/",
+        "/customer/support/",
         "/toiawase",
+        "/toiawase/",
+        "/form",
+        "/form/",
+        "/form/index.php",
+        "/form/index.html",
+        "/form/index.cgi",
         "/company/contact",
+        "/company/contact/",
         "/info/contact",
+        "/about/contact",
+        "/about/contact/",
+        "/ssl/contact",
+        "/ssl/cf_question/index.html",
+        "/contact_dp",
+        "/contact-ir",
     ];
     for (const path of pathCandidates) {
         const candidate = new URL(path, base).toString();
@@ -486,9 +961,12 @@ async function findAndFillForm(page, payload, log) {
         "form[action*='contact']",
         "form[action*='inquiry']",
         "form[action*='toiawase']",
+        "form:has(input[type='email'])",
+        "form:has(input[name*='email'])",
         "form:has(input), form:has(textarea)",
     ];
     let formFound = null;
+    // 最初の試行
     for (const fs of formLocators) {
         const loc = page.locator(fs).first();
         if ((await loc.count()) > 0) {
@@ -504,8 +982,47 @@ async function findAndFillForm(page, payload, log) {
             log("Fallback: using first form on the page");
         }
     }
-    if (!formFound)
+    // フォームが見つからない場合、動的レンダリングを待機してリトライ
+    if (!formFound) {
+        log("Form not found on initial check, waiting for dynamic rendering...");
+        await page.waitForTimeout(3000);
+        for (const fs of formLocators) {
+            const loc = page.locator(fs).first();
+            if ((await loc.count()) > 0) {
+                formFound = loc;
+                log(`Found form after waiting: ${fs}`);
+                break;
+            }
+        }
+        if (!formFound) {
+            const anyForm = page.locator("form").first();
+            if ((await anyForm.count()) > 0) {
+                formFound = anyForm;
+                log("Fallback after waiting: using first form on the page");
+            }
+        }
+        // <form>タグがない場合、email入力欄を含むコンテナを探す
+        if (!formFound) {
+            const emailInputContainerSelectors = [
+                "div:has(input[type='email'])",
+                "section:has(input[type='email'])",
+                "div:has(input[name*='email' i])",
+            ];
+            for (const containerSel of emailInputContainerSelectors) {
+                const container = page.locator(containerSel).first();
+                if ((await container.count()) > 0) {
+                    formFound = container;
+                    log(`Found formless container with email input: ${containerSel}`);
+                    break;
+                }
+            }
+        }
+    }
+    if (!formFound) {
+        log(`❌ No form found on this page`);
         return false;
+    }
+    log(`✓ Form found, checking for CAPTCHA...`);
     // reCAPTCHA / hCaptcha 検出
     const captchaSelectors = [
         'iframe[src*="recaptcha"]',
@@ -721,7 +1238,7 @@ async function findAndFillForm(page, payload, log) {
             ],
         },
         {
-            value: payload.postalCode || "100-0001",
+            value: payload.postalCode,
             selectors: [
                 "input[name*='zip']",
                 "input[name*='postal']",
@@ -734,7 +1251,17 @@ async function findAndFillForm(page, payload, log) {
             ],
         },
         {
-            value: payload.city || "千代田区",
+            value: payload.prefecture,
+            selectors: [
+                "input[name*='pref']",
+                "input[name*='todofuken']",
+                "input[id*='pref']",
+                "input[id*='todofuken']",
+                "input[placeholder*='都道府県']",
+            ],
+        },
+        {
+            value: payload.city,
             selectors: [
                 "input[name*='city']",
                 "input[name*='shiku']",
@@ -744,7 +1271,7 @@ async function findAndFillForm(page, payload, log) {
             ],
         },
         {
-            value: payload.address || "千代田1-1",
+            value: payload.address,
             selectors: [
                 "input[name*='address']",
                 "input[name*='street']",
@@ -905,15 +1432,19 @@ async function findAndFillForm(page, payload, log) {
         },
         {
             keywords: ["郵便番号", "〒", "Postal", "Zip", "Zipcode"],
-            value: payload.postalCode || "100-0001",
+            value: payload.postalCode,
+        },
+        {
+            keywords: ["都道府県", "Prefecture"],
+            value: payload.prefecture,
         },
         {
             keywords: ["市区町村", "市町村", "City"],
-            value: payload.city || "千代田区",
+            value: payload.city,
         },
         {
             keywords: ["住所", "番地", "Address", "Street"],
-            value: payload.address || "千代田1-1",
+            value: payload.address,
         },
         {
             keywords: ["建物", "ビル", "Building"],
@@ -960,7 +1491,7 @@ async function findAndFillForm(page, payload, log) {
             // 選択できない場合はスキップ
         }
     }
-    // チェックボックス：必須または最初のものをチェック（タイムアウト3秒）
+    // チェックボックス：全てチェック（タイムアウト3秒）
     const checkboxes = formFound.locator('input[type="checkbox"]');
     const checkboxCount = await checkboxes.count();
     for (let i = 0; i < checkboxCount; i++) {
@@ -969,7 +1500,23 @@ async function findAndFillForm(page, payload, log) {
             const isChecked = await checkbox.isChecked({ timeout: 3000 });
             if (!isChecked) {
                 await checkbox.check({ timeout: 3000 });
-                log(`Checked checkbox[${i}]`);
+                // ログ用にラベル情報を取得
+                const checkboxId = (await checkbox.getAttribute("id")) || "";
+                const checkboxName = (await checkbox.getAttribute("name")) || "";
+                let labelText = "";
+                if (checkboxId) {
+                    const label = formFound.locator(`label[for="${checkboxId}"]`).first();
+                    if ((await label.count()) > 0) {
+                        labelText = (await label.textContent()) || "";
+                    }
+                }
+                if (!labelText) {
+                    const parentLabel = checkbox.locator("xpath=ancestor::label").first();
+                    if ((await parentLabel.count()) > 0) {
+                        labelText = (await parentLabel.textContent()) || "";
+                    }
+                }
+                log(`Checked checkbox[${i}]: ${labelText.trim() || checkboxName || "unlabeled"}`);
             }
         }
         catch {
@@ -998,7 +1545,8 @@ async function findAndFillForm(page, payload, log) {
         }
     }
     // 必須フィールドの最終チェック：未入力の必須フィールドにプレースホルダーベースで値を入力
-    const requiredInputs = formFound.locator('input[required]:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="submit"])');
+    // required属性だけでなく、aria-required="true"も検出
+    const requiredInputs = formFound.locator('input[required]:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="submit"]), input[aria-required="true"]:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="submit"])');
     const requiredInputCount = await requiredInputs.count();
     for (let i = 0; i < requiredInputCount; i++) {
         const input = requiredInputs.nth(i);
@@ -1011,7 +1559,15 @@ async function findAndFillForm(page, payload, log) {
                 const placeholder = (await input.getAttribute("placeholder")) || "";
                 const ariaLabel = (await input.getAttribute("aria-label")) || "";
                 const title = (await input.getAttribute("title")) || "";
-                const fieldHint = `${inputName}${inputId}${placeholder}${ariaLabel}${title}`.toLowerCase();
+                // label要素のテキストも取得
+                let labelText = "";
+                if (inputId) {
+                    const label = formFound.locator(`label[for="${inputId}"]`).first();
+                    if ((await label.count()) > 0) {
+                        labelText = (await label.textContent()) || "";
+                    }
+                }
+                const fieldHint = `${inputName}${inputId}${placeholder}${ariaLabel}${title}${labelText}`.toLowerCase();
                 let defaultValue = "";
                 // メールアドレス
                 if (inputType === "email" ||
@@ -1110,26 +1666,26 @@ async function findAndFillForm(page, payload, log) {
                     fieldHint.includes("postal") ||
                     fieldHint.includes("郵便") ||
                     fieldHint.includes("〒")) {
-                    defaultValue = payload.postalCode || "100-0001";
+                    defaultValue = payload.postalCode || "";
                     // 都道府県
                 }
                 else if (fieldHint.includes("pref") ||
                     fieldHint.includes("都道府県") ||
                     fieldHint.includes("todofuken")) {
-                    defaultValue = payload.prefecture || "東京都";
+                    defaultValue = payload.prefecture || "";
                     // 市区町村
                 }
                 else if (fieldHint.includes("city") ||
                     fieldHint.includes("市区町村") ||
                     fieldHint.includes("shiku")) {
-                    defaultValue = payload.city || "千代田区";
+                    defaultValue = payload.city || "";
                     // 住所
                 }
                 else if (fieldHint.includes("address") ||
                     fieldHint.includes("street") ||
                     fieldHint.includes("住所") ||
                     fieldHint.includes("番地")) {
-                    defaultValue = payload.address || "千代田1-1";
+                    defaultValue = payload.address || "";
                     // 建物名
                 }
                 else if (fieldHint.includes("building") ||
@@ -1159,8 +1715,8 @@ async function findAndFillForm(page, payload, log) {
             // 入力できない場合はスキップ
         }
     }
-    // 必須テキストエリアのチェック
-    const requiredTextareas = formFound.locator("textarea[required]");
+    // 必須テキストエリアのチェック（required属性とaria-required="true"の両方）
+    const requiredTextareas = formFound.locator('textarea[required], textarea[aria-required="true"]');
     const requiredTextareaCount = await requiredTextareas.count();
     for (let i = 0; i < requiredTextareaCount; i++) {
         const textarea = requiredTextareas.nth(i);
@@ -1170,6 +1726,93 @@ async function findAndFillForm(page, payload, log) {
                 await textarea.fill(payload.message ||
                     "お問い合わせありがとうございます。詳細についてご連絡ください。", { timeout: 2000 });
                 log(`Filled required textarea with default message`);
+            }
+        }
+        catch {
+            // 入力できない場合はスキップ
+        }
+    }
+    // 必須マーク（*、必須など）が付いているフィールドも検出して入力
+    const allInputsForRequiredCheck = formFound.locator('input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="submit"]):not([type="button"])');
+    const allInputsForRequiredCheckCount = await allInputsForRequiredCheck.count();
+    for (let i = 0; i < allInputsForRequiredCheckCount; i++) {
+        const input = allInputsForRequiredCheck.nth(i);
+        try {
+            const currentValue = await input.inputValue({ timeout: 1000 });
+            if (currentValue && currentValue.trim() !== "")
+                continue;
+            const inputId = (await input.getAttribute("id")) || "";
+            let labelText = "";
+            if (inputId) {
+                const label = formFound.locator(`label[for="${inputId}"]`).first();
+                if ((await label.count()) > 0) {
+                    labelText = (await label.textContent()) || "";
+                }
+            }
+            // ラベルに「*」「必須」「※」などが含まれている場合は必須と判定
+            const isLikelyRequired = labelText.includes("*") ||
+                labelText.includes("必須") ||
+                labelText.includes("※") ||
+                labelText.includes("required");
+            if (!isLikelyRequired)
+                continue;
+            // 必須と判定されたフィールドにデフォルト値を入力
+            const inputName = (await input.getAttribute("name")) || "";
+            const inputType = (await input.getAttribute("type")) || "text";
+            const placeholder = (await input.getAttribute("placeholder")) || "";
+            const ariaLabel = (await input.getAttribute("aria-label")) || "";
+            const title = (await input.getAttribute("title")) || "";
+            const fieldHint = `${inputName}${inputId}${placeholder}${ariaLabel}${title}${labelText}`.toLowerCase();
+            let defaultValue = "";
+            if (inputType === "email" ||
+                fieldHint.includes("mail") ||
+                fieldHint.includes("メール")) {
+                defaultValue = payload.email || "test@example.com";
+            }
+            else if (inputType === "tel" ||
+                fieldHint.includes("tel") ||
+                fieldHint.includes("phone") ||
+                fieldHint.includes("電話")) {
+                defaultValue = payload.phone || "03-1234-5678";
+            }
+            else if (fieldHint.includes("company") ||
+                fieldHint.includes("会社") ||
+                fieldHint.includes("企業")) {
+                defaultValue = payload.company || "テスト株式会社";
+            }
+            else if (fieldHint.includes("name") ||
+                fieldHint.includes("氏名") ||
+                fieldHint.includes("名前")) {
+                defaultValue = payload.name || "山田 太郎";
+            }
+            else if (fieldHint.includes("姓") &&
+                !fieldHint.includes("ふりがな") &&
+                !fieldHint.includes("カナ")) {
+                defaultValue = payload.lastName || "山田";
+            }
+            else if (fieldHint.includes("名") &&
+                !fieldHint.includes("姓") &&
+                !fieldHint.includes("氏") &&
+                !fieldHint.includes("ふりがな") &&
+                !fieldHint.includes("カナ")) {
+                defaultValue = payload.firstName || "太郎";
+            }
+            else if (fieldHint.includes("kana") ||
+                fieldHint.includes("ふりがな") ||
+                fieldHint.includes("フリガナ")) {
+                defaultValue = payload.fullNameKana || "やまだ たろう";
+            }
+            else if (fieldHint.includes("subject") ||
+                fieldHint.includes("件名") ||
+                fieldHint.includes("タイトル")) {
+                defaultValue = "お問い合わせ";
+            }
+            else {
+                defaultValue = "テスト";
+            }
+            if (defaultValue) {
+                await input.fill(defaultValue, { timeout: 1000 });
+                log(`Filled required-marked field [${labelText.trim() || inputName || inputId}] with: ${defaultValue}`);
             }
         }
         catch {
@@ -1190,8 +1833,16 @@ async function findAndFillForm(page, payload, log) {
             const ariaLabel = (await input.getAttribute("aria-label")) || "";
             const title = (await input.getAttribute("title")) || "";
             const hint = placeholder || ariaLabel || title;
-            if (!hint)
-                continue; // ヒントがなければスキップ
+            // ヒントがない場合でも、必須フィールドなら「テスト」を入力
+            if (!hint) {
+                const isRequired = (await input.getAttribute("required")) !== null ||
+                    (await input.getAttribute("aria-required")) === "true";
+                if (isRequired) {
+                    await input.fill("テスト", { timeout: 1000 });
+                    log(`Filled required field without hint with: テスト`);
+                }
+                continue;
+            }
             const hintLower = hint.toLowerCase();
             let valueToFill = "";
             // placeholder/aria-label/titleに基づいて値を決定
@@ -1283,6 +1934,14 @@ async function findAndFillForm(page, payload, log) {
                 hintLower.includes("building")) {
                 valueToFill = payload.building || "";
             }
+            else {
+                // 既知パターンに合わないが、必須フィールドの場合はデフォルト値を入力
+                const isRequired = (await input.getAttribute("required")) !== null ||
+                    (await input.getAttribute("aria-required")) === "true";
+                if (isRequired) {
+                    valueToFill = "テスト";
+                }
+            }
             if (valueToFill) {
                 await input.fill(valueToFill, { timeout: 1000 });
                 log(`Filled by hint [${hint}] with: ${valueToFill}`);
@@ -1292,8 +1951,8 @@ async function findAndFillForm(page, payload, log) {
             // 入力できない場合はスキップ
         }
     }
-    // 必須セレクトのチェック
-    const requiredSelects = formFound.locator("select[required]");
+    // 必須セレクトのチェック（required属性とaria-required="true"の両方）
+    const requiredSelects = formFound.locator('select[required], select[aria-required="true"]');
     const requiredSelectCount = await requiredSelects.count();
     for (let i = 0; i < requiredSelectCount; i++) {
         const select = requiredSelects.nth(i);
@@ -1318,39 +1977,138 @@ async function findAndFillForm(page, payload, log) {
             // 選択できない場合はスキップ
         }
     }
+    log(`✅ Form filling completed successfully`);
     return true;
 }
 async function submitForm(page, log, dialogState) {
     const buttonSelectors = [
-        "form button[type='submit']",
-        "form input[type='submit']",
-        "button:has-text('送信')",
-        "button:has-text('確認')",
-        "button:has-text('Submit')",
+        // type="submit" ボタン（最優先）
+        "button[type='submit']",
         "input[type='submit']",
+        // テキストベース（日本語）
+        "button:has-text('送信する')",
+        "button:has-text('送信')",
+        "button:has-text('送る')",
+        "button:has-text('確認画面へ')",
+        "button:has-text('確認する')",
+        "button:has-text('確認')",
+        "button:has-text('進む')",
+        "button:has-text('次へ')",
+        "input[value*='送信']",
+        "input[value*='確認']",
+        "input[value*='進む']",
+        // テキストベース（英語）
+        "button:has-text('Submit')",
+        "button:has-text('Send')",
+        "button:has-text('Confirm')",
+        // type="button" でJavaScript送信するパターン
+        "input[type='button'][value*='送信']",
+        "input[type='button'][value*='確認']",
+        "input[type='button'][onclick*='submit']",
+        "button[onclick*='submit']",
+        // クラス名ベース（一般的なパターン）
+        ".wpcf7-form-control.wpcf7-submit",
+        ".wpcf7-form-button",
+        "button.hs-button",
+        "input.hs-button",
+        "button.submit-button",
+        "button.btn-submit",
+        ".submit-btn",
+        "input.submit",
+        "input.p-form__btn",
+        ".p-form__btn",
+        // 親要素内のボタン
+        ".btnArea button",
+        ".button-area button",
+        "p button[type='submit']",
+        "div button[type='submit']",
     ];
+    log(`🔍 Searching for submit button...`);
     for (const sel of buttonSelectors) {
         const btn = page.locator(sel).first();
         if ((await btn.count()) > 0) {
+            log(`✓ Found submit button: ${sel}`);
             try {
+                // disabled属性を一時的に削除してクリックを試みる
+                const isDisabled = await btn.isDisabled().catch(() => false);
+                if (isDisabled) {
+                    log(`⚠️ Button is disabled, attempting to enable...`);
+                    await btn
+                        .evaluate((el) => {
+                        if (el instanceof HTMLInputElement ||
+                            el instanceof HTMLButtonElement) {
+                            el.disabled = false;
+                        }
+                    })
+                        .catch(() => { });
+                }
                 const urlBefore = page.url();
-                log(`Current URL before submit: ${urlBefore}`);
+                log(`📍 Current URL before submit: ${urlBefore}`);
                 // 送信ボタンをクリック
+                log(`🖱️ Clicking submit button...`);
                 await Promise.all([
                     page
                         .waitForNavigation({ waitUntil: "domcontentloaded", timeout: 5000 })
                         .catch(() => { }),
                     btn.click({ timeout: 3000 }).catch(() => { }),
                 ]);
-                log(`Clicked submit via ${sel}`);
+                log(`✅ Submit button clicked successfully`);
                 // クリック後に短時間待機（Ajax処理やDOM更新のため）
                 await page.waitForTimeout(500);
+                const urlAfter = page.url();
+                log(`URL after click: ${urlAfter}`);
+                // 確認画面の判定（ページ内容とボタンで判定）
+                const pageText = (await page
+                    .locator("body")
+                    .textContent()
+                    .catch(() => "")) || "";
+                const confirmationKeywords = [
+                    "入力内容の確認",
+                    "入力内容をご確認",
+                    "内容確認",
+                    "確認画面",
+                    "ご確認ください",
+                    "以下の内容で送信",
+                    "この内容で送信",
+                    "Confirm your input",
+                    "Please confirm",
+                ];
+                const isConfirmationPage = confirmationKeywords.some((kw) => pageText.includes(kw));
+                if (isConfirmationPage) {
+                    log(`📋 Confirmation page detected by content (URL: ${urlAfter})`);
+                }
                 // 確認画面の判定（最終送信ボタンがあるか）
-                const finalBtn = page
-                    .locator("button:has-text('送信'), input[type='submit']")
-                    .first();
-                if ((await finalBtn.count()) > 0) {
-                    log("Confirmation page detected, clicking final submit");
+                const confirmationSelectors = [
+                    "button:has-text('送信')",
+                    "button:has-text('送る')",
+                    "button:has-text('送信する')",
+                    "button:has-text('この内容で送信')",
+                    "button:has-text('確定')",
+                    "button:has-text('Submit')",
+                    "button:has-text('Send')",
+                    "input[type='submit'][value*='送信']",
+                    "input[type='button'][value*='送信']",
+                    "input[type='submit'][value*='確定']",
+                    "input[type='button'][value*='確定']",
+                    "input[type='submit'][value*='Submit']",
+                    "input[type='submit'][value*='Send']",
+                    ".wpcf7-form-button",
+                    "input.hs-button",
+                    "button.hs-button",
+                    "button.submit-button",
+                    "button.btn-submit",
+                    ".submit-btn",
+                ];
+                let finalBtn = null;
+                for (const confirmSel of confirmationSelectors) {
+                    const candidate = page.locator(confirmSel).first();
+                    if ((await candidate.count()) > 0) {
+                        finalBtn = candidate;
+                        break;
+                    }
+                }
+                if (finalBtn) {
+                    log(`📋 Final submit button found on confirmation page, clicking...`);
                     const urlBeforeFinal = page.url();
                     await Promise.all([
                         page
@@ -1376,14 +2134,15 @@ async function submitForm(page, log, dialogState) {
             }
         }
     }
-    log("No submit button found");
+    log("❌ No submit button found on this page");
     return false;
 }
 // 送信成功の厳密な検証（高速化版）
 async function verifySubmissionSuccess(page, urlBefore, dialogDetected, dialogMessage, log) {
     const urlAfter = page.url();
     const urlChanged = urlAfter !== urlBefore;
-    log(`URL after submit: ${urlAfter} (changed: ${urlChanged})`);
+    log(`📍 URL after submit: ${urlAfter} (changed: ${urlChanged})`);
+    log(`🔍 Verifying submission success...`);
     // 0. ダイアログで成功メッセージが表示された場合
     if (dialogDetected && dialogMessage) {
         const successKeywords = [
@@ -1425,8 +2184,9 @@ async function verifySubmissionSuccess(page, urlBefore, dialogDetected, dialogMe
     })
         .catch(() => "");
     const pageTextLower = pageText.toLowerCase();
-    log(`Page text length: ${pageText.length} characters`);
+    log(`📄 Page text length: ${pageText.length} characters`);
     // 2. エラーキーワードチェック（優先）
+    log(`🔍 Checking for error keywords...`);
     const errorKeywords = [
         // 日本語
         "必須項目",
@@ -1452,20 +2212,29 @@ async function verifySubmissionSuccess(page, urlBefore, dialogDetected, dialogMe
             return false;
         }
     }
+    log(`✓ No error keywords found`);
     // 3. 成功キーワードチェック
+    log(`🔍 Checking for success keywords...`);
     const successKeywords = [
         // 日本語
         "ありがとうございました",
         "ありがとうございます",
         "お問い合わせを受け付けました",
+        "お問い合わせいただきありがとう",
         "送信完了",
         "送信しました",
+        "送信が完了しました",
         "送信が完了",
+        "送信されました",
         "受け付けました",
         "受付完了",
         "完了しました",
         "お問い合わせいただき",
         "送信いただき",
+        "お送りいただき",
+        "承りました",
+        "受信しました",
+        "受領しました",
         // 英語
         "thank you",
         "thanks for",
@@ -1475,6 +2244,8 @@ async function verifySubmissionSuccess(page, urlBefore, dialogDetected, dialogMe
         "request received",
         "submission successful",
         "form submitted",
+        "message has been sent",
+        "your message has been",
     ];
     for (const keyword of successKeywords) {
         if (pageTextLower.includes(keyword.toLowerCase())) {
@@ -1613,6 +2384,184 @@ async function fillByLabel(page, scope, rules, log) {
         }
     }
 }
+// 非同期バッチ処理エンドポイント（Vercelから呼ばれる、時間制限なし）
+app.post("/auto-submit/batch-async", async (req, res) => {
+    console.log("[batch-async] Received request");
+    const { jobId, companyId, items, leadIds, debug } = req.body;
+    console.log(`[batch-async] Request body: jobId=${jobId}, companyId=${companyId}, items=${items?.length}, leadIds=${leadIds?.length}`);
+    if (!jobId || !companyId || !items || !leadIds) {
+        console.error("[batch-async] Missing required fields");
+        return res.status(400).json({
+            error: "jobId, companyId, items, and leadIds are required",
+        });
+    }
+    if (!supabase) {
+        return res.status(500).json({
+            error: "Supabase client not initialized",
+        });
+    }
+    // 即座にレスポンス（非同期処理を開始）
+    res.status(202).json({ message: "Batch processing started" });
+    // バックグラウンドで処理を実行（キューに積んで同時実行数を制限）
+    asyncJobQueue.push({
+        jobId,
+        companyId,
+        addedAt: new Date(),
+        run: async () => {
+            let browser = null;
+            try {
+                console.log(`[batch-async] Starting job ${jobId} with ${items.length} items`);
+                // ジョブステータスを "running" に更新
+                await supabase.from("batch_jobs")
+                    .update({
+                    status: "running",
+                    started_at: new Date().toISOString(),
+                })
+                    .eq("id", jobId);
+                // ブラウザを1回だけ起動（リトライ付き）
+                const maxRetries = 3;
+                for (let attempt = 1; attempt <= maxRetries; attempt++) {
+                    try {
+                        console.log(`[batch-async] Launching browser (attempt ${attempt}/${maxRetries})...`);
+                        browser = await chromium.launch({
+                            headless: !debug,
+                            slowMo: debug ? 200 : 0,
+                            args: [
+                                "--no-sandbox",
+                                "--disable-setuid-sandbox",
+                                "--disable-dev-shm-usage",
+                                "--disable-gpu",
+                                "--disable-gl-drawing-for-tests",
+                                "--disable-accelerated-2d-canvas",
+                                "--disable-background-timer-throttling",
+                                "--disable-backgrounding-occluded-windows",
+                                "--disable-renderer-backgrounding",
+                                "--disable-extensions",
+                                "--disable-plugins",
+                                "--memory-pressure-off",
+                                "--single-process", // コンテナ環境での安定性向上
+                            ],
+                        });
+                        console.log(`[batch-async] Browser launched successfully`);
+                        break;
+                    }
+                    catch (launchError) {
+                        const msg = launchError instanceof Error ? launchError.message : String(launchError);
+                        console.error(`[batch-async] Browser launch failed (attempt ${attempt}): ${msg}`);
+                        if (attempt < maxRetries) {
+                            // 指数バックオフで待機
+                            const waitTime = Math.pow(2, attempt) * 1000;
+                            console.log(`[batch-async] Waiting ${waitTime}ms before retry...`);
+                            await new Promise(resolve => setTimeout(resolve, waitTime));
+                        }
+                        else {
+                            throw new Error(`Browser launch failed after ${maxRetries} attempts: ${msg}`);
+                        }
+                    }
+                }
+                if (!browser) {
+                    throw new Error("Browser launch failed");
+                }
+                const results = [];
+                let completedCount = 0;
+                let failedCount = 0;
+                // 各アイテムを順次処理
+                for (let i = 0; i < items.length; i++) {
+                    const item = items[i];
+                    const leadId = leadIds[i];
+                    console.log(`[batch-async] [${i + 1}/${items.length}] Processing ${item.url} (leadId: ${leadId})`);
+                    try {
+                        // 1件ごとの処理（新しいコンテキストで実行）
+                        const result = await autoSubmitWithBrowser(browser, item);
+                        if (result.success) {
+                            completedCount++;
+                            results.push({ leadId, url: item.url, success: true });
+                            // リードのステータスを "success" に更新
+                            await supabase.from("lead_lists")
+                                .update({ send_status: "success" })
+                                .eq("id", leadId);
+                        }
+                        else {
+                            failedCount++;
+                            results.push({
+                                leadId,
+                                url: item.url,
+                                success: false,
+                                error: result.note || "Unknown error",
+                            });
+                            // リードのステータスを "failed" に更新
+                            await supabase.from("lead_lists")
+                                .update({ send_status: "failed" })
+                                .eq("id", leadId);
+                        }
+                        // 進捗をDBに更新
+                        await supabase.from("batch_jobs")
+                            .update({
+                            completed_items: completedCount,
+                            failed_items: failedCount,
+                            results: results,
+                        })
+                            .eq("id", jobId);
+                        console.log(`[batch-async] [${i + 1}/${items.length}] ${item.url} - success=${result.success}`);
+                    }
+                    catch (error) {
+                        const message = error instanceof Error ? error.message : String(error);
+                        console.error(`[batch-async] [${i + 1}/${items.length}] Error: ${message}`);
+                        failedCount++;
+                        results.push({
+                            leadId,
+                            url: item.url,
+                            success: false,
+                            error: message,
+                        });
+                        // リードのステータスを "failed" に更新
+                        await supabase.from("lead_lists")
+                            .update({ send_status: "failed" })
+                            .eq("id", leadId);
+                        // 進捗をDBに更新
+                        await supabase.from("batch_jobs")
+                            .update({
+                            completed_items: completedCount,
+                            failed_items: failedCount,
+                            results: results,
+                        })
+                            .eq("id", jobId);
+                    }
+                }
+                // ジョブステータスを "completed" に更新
+                await supabase.from("batch_jobs")
+                    .update({
+                    status: "completed",
+                    completed_at: new Date().toISOString(),
+                })
+                    .eq("id", jobId);
+                console.log(`[batch-async] Job ${jobId} completed: ${completedCount} success, ${failedCount} failed`);
+            }
+            catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                console.error(`[batch-async] Job ${jobId} failed: ${message}`);
+                // ジョブステータスを "failed" に更新
+                await supabase.from("batch_jobs")
+                    .update({
+                    status: "failed",
+                    error_message: message,
+                    completed_at: new Date().toISOString(),
+                })
+                    .eq("id", jobId);
+            }
+            finally {
+                // 失敗時も含めて必ずブラウザを閉じる（リーク → EAGAIN悪化を防止）
+                if (browser) {
+                    await browser.close().catch((err) => {
+                        console.error(`[batch-async] Failed to close browser: ${err}`);
+                    });
+                }
+            }
+        },
+    });
+    console.log(`[batch-async/queue] Enqueued job ${jobId} (companyId=${companyId}). Queue size: ${asyncJobQueue.length}, active=${currentAsyncJobCount}/${MAX_CONCURRENT_ASYNC_JOBS}`);
+    processAsyncJobQueue();
+});
 // サーバー起動
 app.listen(PORT, () => {
     console.log(`🚀 Auto-submit server running on port ${PORT}`);

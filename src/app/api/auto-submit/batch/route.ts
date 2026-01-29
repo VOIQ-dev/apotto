@@ -136,34 +136,82 @@ export async function POST(req: NextRequest) {
       `[POST /api/auto-submit/batch] Job created: ${job.id} for company ${companyId} with ${items.length} items`,
     );
 
-    // Railway に非同期処理を依頼（待たない）
+    // Railway に非同期処理を依頼
+    // NOTE: Vercel のサーバレス環境で "fire-and-forget" (awaitしない) は途中で中断され、
+    // ジョブが pending のまま残ることがあるため、ここは必ず await する。
     console.log(
       `[POST /api/auto-submit/batch] Sending async job to Railway: ${WORKER_URL}/auto-submit/batch-async`,
     );
-    fetch(`${WORKER_URL}/auto-submit/batch-async`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        jobId: job.id,
-        companyId,
-        items,
-        leadIds,
-        debug,
-      }),
-    })
-      .then((response) => {
-        console.log(
-          `[POST /api/auto-submit/batch] Railway responded with status: ${response.status}`,
-        );
-      })
-      .catch((err) => {
-        console.error(
-          `[POST /api/auto-submit/batch] Failed to start async job: ${err.message}`,
-        );
-        // エラーでもジョブは登録済みなので、Railway側で後から処理可能
+    const controller = new AbortController();
+    const timeoutMs = 8000;
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    let workerStatus: number | null = null;
+    let workerBodyText: string | null = null;
+    try {
+      const workerRes = await fetch(`${WORKER_URL}/auto-submit/batch-async`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          jobId: job.id,
+          companyId,
+          items,
+          leadIds,
+          debug,
+        }),
+        signal: controller.signal,
       });
+      workerStatus = workerRes.status;
+      workerBodyText = await workerRes.text().catch(() => null);
+      console.log(
+        `[POST /api/auto-submit/batch] Railway responded with status: ${workerStatus}`,
+      );
+
+      // ワーカー起動に失敗した場合は、ジョブを failed にしてフロントにエラーを返す
+      if (!workerRes.ok) {
+        await supabase
+          .from("batch_jobs")
+          .update({
+            status: "failed",
+            error_message: `Failed to start worker: HTTP ${workerStatus}${
+              workerBodyText ? ` - ${workerBodyText.slice(0, 200)}` : ""
+            }`,
+            completed_at: new Date().toISOString(),
+          })
+          .eq("id", job.id);
+
+        const res = NextResponse.json(
+          { error: "Failed to start worker", workerStatus },
+          { status: 502 },
+        );
+        applyAuthCookies(res, cookieMutations);
+        return res;
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err ?? "Unknown");
+      console.error(
+        `[POST /api/auto-submit/batch] Failed to start async job: ${msg}`,
+      );
+      await supabase
+        .from("batch_jobs")
+        .update({
+          status: "failed",
+          error_message: `Failed to start worker: ${msg}`,
+          completed_at: new Date().toISOString(),
+        })
+        .eq("id", job.id);
+
+      const res = NextResponse.json(
+        { error: "Failed to start worker" },
+        { status: 502 },
+      );
+      applyAuthCookies(res, cookieMutations);
+      return res;
+    } finally {
+      clearTimeout(timeout);
+    }
 
     // 即座にレスポンス（ジョブIDを返す）
     const res = NextResponse.json({
