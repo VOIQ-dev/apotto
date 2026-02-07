@@ -158,3 +158,52 @@ export function createSessionInvalidResponse(
   applyAuthCookies(res, cookieMutations);
   return res;
 }
+
+/**
+ * 認証されたユーザーの会社IDを簡易取得
+ * Route Handlerで使用する簡易版（requestオブジェクトが必要）
+ *
+ * @deprecated 新しいコードではgetAccountContextFromRequestを使用してください
+ */
+export async function getAuthenticatedCompanyId(
+  request?: NextRequest,
+): Promise<string | null> {
+  // requestが渡されない場合はheaders()を使用（Server Componentから呼ばれた場合）
+  if (!request) {
+    try {
+      const { headers } = await import("next/headers");
+      const headersList = await headers();
+
+      // NextRequestを模倣するオブジェクトを作成
+      const mockRequest = {
+        cookies: {
+          get(name: string) {
+            const cookieHeader = headersList.get("cookie");
+            if (!cookieHeader) return undefined;
+
+            const cookie = cookieHeader
+              .split(";")
+              .map((c) => c.trim())
+              .find((c) => c.startsWith(`${name}=`));
+
+            if (!cookie) return undefined;
+
+            return { value: cookie.split("=")[1] };
+          },
+        },
+        headers: headersList,
+      } as unknown as NextRequest;
+
+      const { companyId, sessionValid } =
+        await getAccountContextFromRequest(mockRequest);
+      return sessionValid && companyId ? companyId : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // requestが渡された場合（Route Handlerから呼ばれた場合）
+  const { companyId, sessionValid } =
+    await getAccountContextFromRequest(request);
+  return sessionValid && companyId ? companyId : null;
+}

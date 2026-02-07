@@ -51,6 +51,14 @@ import {
   type ProductContext,
   createEmptyProductContext,
 } from "@/lib/productContext";
+import {
+  pingExtension,
+  addBatchToExtension,
+  getExtensionStatus,
+  getMaxConcurrent,
+  setMaxConcurrent as saveMaxConcurrentToExtension,
+  type ExtensionQueueItem,
+} from "@/lib/chromeExtension";
 
 type SenderProfile = {
   companyName: string;
@@ -109,7 +117,7 @@ type LeadRow = {
   id: string;
   companyName: string;
   homepageUrl: string;
-  sendStatus: "pending" | "success" | "failed" | "blocked";
+  sendStatus: "成功" | "失敗" | "送信不可" | "未送信";
   intentScore: number | null;
   isAppointed: boolean;
   isNg: boolean;
@@ -118,6 +126,9 @@ type LeadRow = {
   title: string;
   email: string;
   importFileName: string;
+  submitCount: number;
+  lastSubmittedAt: string | null;
+  errorMessage: string | null;
 };
 
 type PdfAsset = {
@@ -272,10 +283,10 @@ const CustomSetFilter = ({
   );
 
   const options = [
-    { value: "success", label: "成功" },
-    { value: "failed", label: "失敗" },
-    { value: "blocked", label: "送信不可" },
-    { value: "", label: "-" },
+    { value: "成功", label: "成功" },
+    { value: "失敗", label: "失敗" },
+    { value: "送信不可", label: "送信不可" },
+    { value: "未送信", label: "未送信" },
   ];
 
   const doesFilterPass = useCallback(
@@ -392,6 +403,11 @@ export default function AiCustomPage() {
   );
   const [isDarkMode, setIsDarkMode] = useState(false);
 
+  // 送信方法は拡張機能に固定（予約送信は別途実装予定）
+  const [extensionAvailable, setExtensionAvailable] = useState(false);
+  // 並行タブ数（デフォルト3）
+  const [maxConcurrent, setMaxConcurrent] = useState(3);
+
   // ダークモード検出
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -426,6 +442,29 @@ export default function AiCustomPage() {
   const agGridTheme = useMemo(() => {
     return isDarkMode ? agGridThemeDark : agGridThemeLight;
   }, [isDarkMode]);
+
+  // Chrome拡張機能の可用性チェックと並行タブ数の取得
+  useEffect(() => {
+    async function checkExtension() {
+      const available = await pingExtension();
+      setExtensionAvailable(available);
+      if (available) {
+        console.log("[ai-custom] Chrome拡張機能が利用可能です");
+        // 並行タブ数を取得
+        const concurrent = await getMaxConcurrent();
+        setMaxConcurrent(concurrent);
+      }
+    }
+    checkExtension();
+  }, []);
+
+  // 並行タブ数を拡張機能に保存
+  const handleMaxConcurrentChange = async (value: number) => {
+    setMaxConcurrent(value);
+    if (extensionAvailable) {
+      await saveMaxConcurrentToExtension(value);
+    }
+  };
 
   // リード表管理
   const [leads, setLeads] = useState<LeadRow[]>([]);
@@ -543,17 +582,24 @@ export default function AiCustomPage() {
           id: String(l.id),
           companyName: String(l.company_name ?? ""),
           homepageUrl: String(l.homepage_url ?? ""),
-          sendStatus: l.send_status as
-            | "pending"
-            | "success"
-            | "failed"
-            | "blocked",
+          sendStatus: (() => {
+            const status = l.send_status;
+            if (status === "success") return "成功";
+            if (status === "failed") return "失敗";
+            if (status === "blocked") return "送信不可";
+            return "未送信"; // null, undefined, "", pending の場合
+          })(),
           intentScore: l.intentScore as number | null,
           isAppointed: Boolean(l.is_appointed),
           isNg: Boolean(l.is_ng),
           contactName: String(l.contact_name ?? ""),
           department: String(l.department ?? ""),
           title: String(l.title ?? ""),
+          submitCount: Number(l.submit_count ?? 0),
+          lastSubmittedAt: l.last_submitted_at
+            ? String(l.last_submitted_at)
+            : null,
+          errorMessage: l.error_message ? String(l.error_message) : null,
           email: String(l.email ?? ""),
           importFileName: String(l.import_file_name ?? ""),
         }),
@@ -661,11 +707,34 @@ export default function AiCustomPage() {
         editable: false,
         minWidth: 100,
         filter: CustomSetFilter,
-        cellRenderer: (params: { value: string }) => {
-          if (params.value === "success") return "成功";
-          if (params.value === "failed") return "失敗";
-          if (params.value === "blocked") return "送信不可";
-          return "-";
+        filterParams: {
+          values: ["成功", "失敗", "送信不可", "未送信"],
+          suppressSelectAll: false,
+        },
+      },
+      {
+        field: "submitCount",
+        headerName: "送信回数",
+        editable: false,
+        minWidth: 90,
+        cellRenderer: (params: { value: number }) => {
+          const count = params.value || 0;
+          return `${count}回`;
+        },
+      },
+      {
+        field: "lastSubmittedAt",
+        headerName: "最終送信日",
+        editable: false,
+        minWidth: 140,
+        cellRenderer: (params: { value: string | null }) => {
+          if (!params.value) return "-";
+          const date = new Date(params.value);
+          return date.toLocaleDateString("ja-JP", {
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+          });
         },
       },
       {
@@ -1269,110 +1338,97 @@ export default function AiCustomPage() {
         };
       });
 
-      // バッチ送信API呼び出し（非同期パターン）
+      // バッチ送信API呼び出し
       const leadIds = batchItems
         .map((item) => item.card.leadId)
         .filter(Boolean) as string[];
 
-      const response = await fetch("/api/auto-submit/batch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          items: batchItems.map((item) => item.payload),
-          leadIds,
-          debug: false,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Batch request failed");
+      // Chrome拡張機能経由で送信（固定）
+      if (!extensionAvailable) {
+        throw new Error(
+          "Chrome拡張機能が利用できません。拡張機能をインストールしてください。",
+        );
       }
 
-      const { jobId } = await response.json();
-      pushLog(`バッチジョブ開始（Job ID: ${jobId}）`);
+      pushLog(`🔌 Chrome拡張機能で送信開始（${targets.length}件）`);
 
-      // ポーリングで進捗確認（2秒ごと）
-      let successCount = 0;
-      let failedCount = 0;
-      let lastCompletedCount = 0;
+      const extensionItems: ExtensionQueueItem[] = batchItems.map((item) => ({
+        url: item.payload.url,
+        company: item.card.companyName,
+        leadId: item.card.leadId || item.cardId,
+        formData: {
+          name: item.payload.name,
+          email: item.payload.email,
+          phone: item.payload.phone,
+          company: item.payload.company,
+          message: item.payload.message,
+          lastName: item.payload.lastName,
+          firstName: item.payload.firstName,
+          lastNameKana: item.payload.lastNameKana,
+          firstNameKana: item.payload.firstNameKana,
+          postalCode: item.payload.postalCode,
+          prefecture: item.payload.prefecture,
+          address: item.payload.address,
+          department: item.payload.department,
+          title: item.payload.title,
+        },
+      }));
 
-      // Promiseでポーリング完了を待つ
-      await new Promise<void>((resolve, reject) => {
-        const pollInterval = setInterval(async () => {
-          try {
-            const jobRes = await fetch(`/api/batch-jobs/${jobId}`);
-            if (!jobRes.ok) {
-              console.error("Failed to fetch job status");
-              return;
-            }
+      const extResult = await addBatchToExtension(extensionItems);
 
-            const job = await jobRes.json();
+      if (!extResult.success) {
+        throw new Error(extResult.error || "拡張機能への送信に失敗しました");
+      }
 
-            // 新たに完了したアイテムがあればログ表示
-            if (job.completed_items + job.failed_items > lastCompletedCount) {
-              successCount = job.completed_items;
-              failedCount = job.failed_items;
-              lastCompletedCount = successCount + failedCount;
+      pushLog(`✅ ${extResult.count}件を拡張機能のキューに追加しました`);
+      pushLog(`📝 送信進捗を監視中...`);
 
-              pushLog(
-                `進捗: ${lastCompletedCount}/${job.total_items}件完了（成功 ${successCount} / 失敗 ${failedCount}）`,
-              );
-            }
+      // ベースラインを取得（送信開始前の完了済み件数）
+      const baselineStatus = await getExtensionStatus();
+      const baselineCompleted = baselineStatus?.completed || 0;
+      const baselineFailed = baselineStatus?.failed || 0;
 
-            // 完了またはエラーの場合
-            if (job.status === "completed" || job.status === "failed") {
-              clearInterval(pollInterval);
+      // 拡張機能の送信完了をポーリングで待つ（無期限）
+      const initialPending = extResult.count || targets.length;
+      let lastLoggedProgress = 0;
 
-              if (job.status === "completed") {
-                pushLog(
-                  `✅ 送信完了（成功 ${job.completed_items} / 失敗 ${job.failed_items}）`,
-                );
+      const pollInterval = 2000; // 2秒ごとにチェック
 
-                // PDF送信ログを保存（成功したアイテムのみ）
-                for (const item of batchItems) {
-                  if (item.linkEntries.length > 0) {
-                    const itemResult = job.results?.find(
-                      (r: any) => r.leadId === item.card.leadId,
-                    );
-                    if (itemResult?.success) {
-                      await fetch("/api/pdf/send-log", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                          logs: item.linkEntries.map((entry) => ({
-                            pdf_id: entry.pdfId,
-                            token: entry.token,
-                            recipient_company_name: item.card.companyName,
-                            recipient_homepage_url: item.card.homepageUrl,
-                            recipient_email: item.card.email,
-                            sent_at: item.sentAtIso,
-                          })),
-                        }),
-                      });
-                    }
-                  }
-                }
-                resolve();
-              } else {
-                pushLog(
-                  `❌ バッチ処理失敗: ${job.error_message || "Unknown error"}`,
-                );
-                reject(new Error(job.error_message || "Batch job failed"));
-              }
-            }
-          } catch (pollErr) {
-            console.error("Polling error:", pollErr);
-            clearInterval(pollInterval);
-            reject(pollErr);
-          }
-        }, 2000);
+      while (true) {
+        await new Promise((resolve) => setTimeout(resolve, pollInterval));
 
-        // タイムアウトなし（Railway側で各アイテムのタイムアウトを管理）
-      });
+        const status = await getExtensionStatus();
+        if (!status) {
+          pushLog("⚠️ 拡張機能のステータス取得に失敗しました");
+          break;
+        }
 
-      return { successCount, failedCount };
+        // ベースラインからの差分で今回の送信結果を計算
+        const currentCompleted = status.completed - baselineCompleted;
+        const currentFailed = status.failed - baselineFailed;
+        const totalProcessed = currentCompleted + currentFailed;
+        const remaining = status.pending + status.processing;
+
+        // 進捗をログ出力（変化があった時のみ）
+        if (totalProcessed > lastLoggedProgress) {
+          pushLog(
+            `📊 進捗: ${totalProcessed}/${initialPending}件完了（成功 ${currentCompleted} / 失敗 ${currentFailed}）`,
+          );
+          lastLoggedProgress = totalProcessed;
+        }
+
+        // 全て完了したらループを抜ける
+        if (remaining === 0 && totalProcessed >= initialPending) {
+          pushLog(
+            `✅ 拡張機能での送信完了（成功 ${currentCompleted} / 失敗 ${currentFailed}）`,
+          );
+          return { successCount: currentCompleted, failedCount: currentFailed };
+        }
+      }
+
+      return { successCount: 0, failedCount: targets.length };
     },
-    [pushLog, selectedPdfIdList, senderProfile],
+    [pushLog, selectedPdfIdList, senderProfile, extensionAvailable],
   );
 
   const handleSimulateSend = useCallback(
@@ -1424,10 +1480,7 @@ export default function AiCustomPage() {
   );
 
   const runAutoWorkflow = useCallback(
-    async (
-      cardSnapshots: CompanyCard[],
-      skipSendLeadIds: Set<string> = new Set(),
-    ) => {
+    async (cardSnapshots: CompanyCard[]) => {
       if (!cardSnapshots.length) return;
       if (autoRunStatus === "running") return;
 
@@ -1527,23 +1580,8 @@ export default function AiCustomPage() {
               lastProcessed: snapshot.id,
             }));
 
-            // 過去に失敗したリードは送信をスキップ（送信結果には失敗として追加）
-            if (snapshot.leadId && skipSendLeadIds.has(snapshot.leadId)) {
-              failedCount++;
-              setSendResults((prev) => [
-                ...prev,
-                {
-                  companyName: readyCard.companyName || label,
-                  homepageUrl: readyCard.homepageUrl,
-                  email: readyCard.email,
-                  status: "failed" as const,
-                  sentAtIso: new Date().toISOString(),
-                },
-              ]);
-            } else {
-              readyQueue.push(readyCard);
-              // 全生成完了後に一括送信するため、ここでは送信しない
-            }
+            // 送信キューに追加
+            readyQueue.push(readyCard);
           } catch (error) {
             pushLog(
               `❌ 文面生成失敗: ${label} - ${error instanceof Error ? error.message : String(error)}`,
@@ -1868,16 +1906,6 @@ export default function AiCustomPage() {
 
     const selectedLeads = leads.filter((lead) => selectedLeadIds.has(lead.id));
 
-    // 失敗済み・ブロック済みのリードIDを記録（送信時にスキップするため）
-    const skipLeadIds = new Set(
-      selectedLeads
-        .filter(
-          (lead) =>
-            lead.sendStatus === "failed" || lead.sendStatus === "blocked",
-        )
-        .map((lead) => lead.id),
-    );
-
     // 全てのリードでカードを生成（文言生成は全て行う）
     const cardsToSend = selectedLeads.map((lead) => ({
       ...createEmptyCard(),
@@ -1893,7 +1921,7 @@ export default function AiCustomPage() {
     setCards(cardsToSend);
     pushLog(`${cardsToSend.length}件のAI文言生成を開始しました`);
     setTimeout(() => {
-      void runAutoWorkflow(cardsToSend, skipLeadIds);
+      void runAutoWorkflow(cardsToSend);
     }, 0);
   }, [leads, pushLog, runAutoWorkflow, selectedLeadIds, showToast]);
 
@@ -2601,12 +2629,7 @@ export default function AiCustomPage() {
           </div>
 
           {/* テーブル操作ボタン */}
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-sm text-muted-foreground">
-              {leads.length > 0
-                ? `${leads.length}件のリード`
-                : "リードがありません"}
-            </span>
+          <div className="flex items-center justify-end mb-3">
             <div className="flex items-center gap-2">
               <Tooltip label="選択したリードを削除" position="top" withArrow>
                 <button
@@ -2644,6 +2667,59 @@ export default function AiCustomPage() {
                   />
                 </button>
               </Tooltip>
+            </div>
+          </div>
+
+          {/* 送信結果の説明 */}
+          <div className="mb-3 p-4 rounded-lg border border-border bg-muted/5">
+            <h3 className="text-sm font-semibold text-foreground mb-3">
+              送信結果の見方
+            </h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="flex items-start gap-2">
+                <span className="inline-block w-3 h-3 rounded-full bg-emerald-500 mt-0.5 flex-shrink-0"></span>
+                <div>
+                  <div className="text-sm font-medium text-foreground">
+                    成功
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    フォーム送信が完了しました
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="inline-block w-3 h-3 rounded-full bg-red-500 mt-0.5 flex-shrink-0"></span>
+                <div>
+                  <div className="text-sm font-medium text-foreground">
+                    失敗
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    フォームが見つからない、または送信エラー
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="inline-block w-3 h-3 rounded-full bg-amber-500 mt-0.5 flex-shrink-0"></span>
+                <div>
+                  <div className="text-sm font-medium text-foreground">
+                    送信不可
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    URLが無効、または対応外のサイト
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="inline-block w-3 h-3 rounded-full bg-slate-400 mt-0.5 flex-shrink-0"></span>
+                <div>
+                  <div className="text-sm font-medium text-foreground">
+                    未送信
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    まだ送信処理を実行していません
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -2686,6 +2762,34 @@ export default function AiCustomPage() {
             </span>
 
             <div className="flex items-center gap-2">
+              {/* 並行タブ数選択 */}
+              <div className="flex items-center gap-1.5">
+                <label className="text-[10px] text-muted-foreground whitespace-nowrap">
+                  並行数:
+                </label>
+                <select
+                  value={maxConcurrent}
+                  onChange={(e) =>
+                    void handleMaxConcurrentChange(Number(e.target.value))
+                  }
+                  disabled={isSending || !extensionAvailable}
+                  className="text-xs px-2 py-1 rounded border border-border bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                  title={
+                    !extensionAvailable
+                      ? "拡張機能が未接続です"
+                      : isSending
+                        ? "送信中は変更できません"
+                        : "同時に処理するタブ数"
+                  }
+                >
+                  <option value={1}>1</option>
+                  <option value={2}>2</option>
+                  <option value={3}>3</option>
+                  <option value={4}>4</option>
+                  <option value={5}>5</option>
+                </select>
+              </div>
+
               <button
                 type="button"
                 onClick={handleGenerateSelectedLeads}
@@ -2791,6 +2895,22 @@ export default function AiCustomPage() {
                 </button>
               </div>
 
+              {/* 拡張機能の接続状態 */}
+              {extensionAvailable ? (
+                <div className="mt-3 p-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10">
+                  <p className="text-xs text-emerald-500">
+                    ✓ Chrome拡張機能に接続中
+                  </p>
+                </div>
+              ) : (
+                <div className="mt-3 p-3 rounded-lg border border-amber-500/30 bg-amber-500/10">
+                  <p className="text-xs text-amber-500">
+                    ⚠️
+                    Chrome拡張機能が未接続です。拡張機能をインストールしてください。
+                  </p>
+                </div>
+              )}
+
               <button
                 type="button"
                 onClick={() => void handleSimulateSend()}
@@ -2799,30 +2919,6 @@ export default function AiCustomPage() {
               >
                 {isSending ? "送信中..." : "チェック済み企業へ一括送信"}
               </button>
-
-              {sendSummary.total > 0 && (
-                <div className="mt-4 rounded-xl border border-border bg-muted/20 p-4">
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-semibold text-foreground">
-                      送信結果
-                    </p>
-                    {lastSendFinishedAt && (
-                      <p className="text-[10px] text-muted-foreground">
-                        完了:{" "}
-                        {new Date(lastSendFinishedAt).toLocaleString("ja-JP")}
-                      </p>
-                    )}
-                  </div>
-                  <div className="mt-2 flex items-center gap-4 text-xs">
-                    <span className="font-semibold text-emerald-400">
-                      成功 {sendSummary.success}
-                    </span>
-                    <span className="font-semibold text-rose-400">
-                      失敗 {sendSummary.failed}
-                    </span>
-                  </div>
-                </div>
-              )}
             </div>
           </div>
 

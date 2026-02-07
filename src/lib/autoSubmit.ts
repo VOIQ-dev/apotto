@@ -422,11 +422,23 @@ async function submitForm(
         ]);
         log(`Clicked submit via ${sel}`);
 
+        // Wait for page to stabilize after potential navigation/rendering
+        await page.waitForLoadState("domcontentloaded").catch(() => {});
+        await page.waitForTimeout(1500); // 確認ページの遷移・レンダリングを待つ
+
         // If the first click was a confirm step, try to find a final submit
         const finalBtn = page
           .locator("button:has-text('送信'), input[type='submit']")
           .first();
+
+        // Wait for the final submit button to be visible and enabled
         if ((await finalBtn.count()) > 0) {
+          log("Found final submit button, waiting for it to be ready...");
+          await finalBtn
+            .waitFor({ state: "visible", timeout: 5000 })
+            .catch(() => {});
+          await page.waitForTimeout(500); // 追加の安定化待機
+
           await Promise.all([
             page
               .waitForNavigation({ waitUntil: "load", timeout: 15000 })
