@@ -2,6 +2,22 @@
  * Chrome拡張機能との通信ヘルパー
  */
 
+// Chrome API型定義（windowオブジェクト拡張）
+declare global {
+  interface Window {
+    chrome?: {
+      runtime?: {
+        sendMessage: (
+          extensionId: string,
+          message: unknown,
+          responseCallback?: (response: unknown) => void,
+        ) => void;
+        lastError?: { message: string };
+      };
+    };
+  }
+}
+
 // Chrome拡張機能のID（本番環境で設定）
 const EXTENSION_ID = process.env.NEXT_PUBLIC_CHROME_EXTENSION_ID;
 
@@ -127,15 +143,20 @@ export function sendToExtension(
     }
 
     try {
-      chrome.runtime.sendMessage(
+      if (!window.chrome?.runtime?.sendMessage) {
+        reject(new Error("Chrome runtime API not available"));
+        return;
+      }
+
+      window.chrome.runtime.sendMessage(
         EXTENSION_ID,
         message,
-        (response: Record<string, unknown> | undefined) => {
-          if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
+        (response: unknown) => {
+          if (window.chrome?.runtime?.lastError) {
+            reject(new Error(window.chrome.runtime.lastError.message));
             return;
           }
-          resolve(response);
+          resolve(response as Record<string, unknown> | undefined);
         },
       );
     } catch (error) {
