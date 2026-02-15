@@ -47,7 +47,7 @@ export const metadata: Metadata = {
     images: [
       {
         url: "/opengraph-image.png",
-        width: 768,
+        width: 1408,
         height: 768,
         alt: "apotto - AI営業支援プラットフォーム",
       },
