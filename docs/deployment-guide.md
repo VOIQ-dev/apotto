@@ -1,6 +1,6 @@
 # 本番環境構築手順書
 
-最終更新: 2026-01-17
+最終更新: 2026-02-06
 
 ## 📋 目次
 
@@ -233,7 +233,108 @@ open http://localhost:3000
 
 ---
 
+## Chrome拡張機能のデプロイ
+
+### 前提条件
+
+Chrome拡張機能は**フォーム自動送信機能に必須**です。以下の2つの方法でデプロイできます。
+
+### 方法A: Chrome Web Storeに公開（推奨・本番環境）
+
+**メリット**:
+
+- 全ユーザー共通のExtension ID
+- 自動更新機能
+- プロフェッショナルな配布方法
+
+#### 1. Chrome Web Store Developer登録
+
+1. https://chrome.google.com/webstore/devconsole/ にアクセス
+2. Googleアカウントでログイン
+3. 開発者登録料（$5）を支払う
+
+#### 2. 拡張機能のビルドとZIP作成
+
+```bash
+cd chrome-extension
+yarn install
+yarn build
+zip -r apotto-extension.zip dist/
+```
+
+#### 3. Chrome Web Storeにアップロード
+
+1. Developer Dashboardで「新しいアイテム」をクリック
+2. `apotto-extension.zip`をアップロード
+3. ストア情報を入力：
+   - **名前**: apotto
+   - **説明**: AI営業フォーム自動送信ツール
+   - **カテゴリ**: 生産性
+   - **言語**: 日本語
+   - **アイコン**: 既にZIPに含まれている
+   - **スクリーンショット**: 最低1枚（1280x800px または 640x400px）
+
+4. **プライバシー設定**:
+   - プライバシーポリシーURL: `https://apotto.jp/privacy-policy`
+   - データ収集の開示（必須）
+
+5. **権限の説明**:
+   - `<all_urls>`: 企業の問い合わせフォームにアクセスするために必要
+   - `tabs`: フォーム送信のためにタブを管理
+   - `storage`: 並行タブ数などの設定を保存
+
+6. 「Submit for review」をクリック
+
+#### 4. 審査と公開
+
+- 審査期間: 通常1-3日
+- 審査結果はメールで通知される
+- 承認後、Extension IDが発行される（全ユーザー共通）
+
+#### 5. Extension IDをVercelに設定
+
+1. Chrome Web Store > 公開された拡張機能 > Extension ID をコピー
+2. Vercel > Settings > Environment Variables
+3. 以下を追加：
+   - Name: `NEXT_PUBLIC_CHROME_EXTENSION_ID`
+   - Value: コピーしたExtension ID
+   - Environment: Production
+4. 「Save」をクリック
+5. 「Redeploy」で再デプロイ
+
+### 方法B: 開発版として直接配布（開発・テスト環境）
+
+**メリット**:
+
+- 審査不要
+- 即座に配布可能
+
+**デメリット**:
+
+- ユーザーごとに異なるExtension ID（環境変数で管理不可）
+- 自動更新なし
+- 手動インストールが必要
+
+#### 配布手順
+
+1. `apotto-extension.zip`をユーザーに配布
+2. ユーザーに以下の手順を案内：
+   - `chrome://extensions`を開く
+   - 「デベロッパーモード」をON
+   - 「パッケージ化されていない拡張機能を読み込む」
+   - ZIPを解凍した`dist`フォルダを選択
+
+#### 注意事項
+
+- 開発版のExtension IDはユーザーごとに異なるため、環境変数での一元管理はできません
+- 本番環境では**方法A（Chrome Web Store公開）を強く推奨**
+
+---
+
 ## Railwayデプロイ
+
+**注意**: RailwayのPlaywrightワーカーは現在使用されていません（Chrome拡張機能に移行済み）。
+将来的に予約送信機能を実装する場合に使用します。
 
 ### 1. Railwayプロジェクト作成
 
@@ -469,8 +570,13 @@ Error: JWT token is invalid
 ### 動作確認
 
 - [ ] ログイン/ログアウトができる
-- [ ] AIメール生成が動作する
-- [ ] フォーム自動送信が動作する
+- [ ] Chrome拡張機能が接続できる（「✓ Chrome拡張機能に接続中」と表示）
+- [ ] リードのCSVインポートができる
+- [ ] AI文言生成が動作する
+- [ ] 並行タブ数の設定ができる（1-5から選択）
+- [ ] フォーム自動送信が動作する（Chrome拡張機能経由）
+- [ ] 送信結果がリード表に反映される
+- [ ] 送信回数と最終送信日が更新される
 - [ ] PDF管理機能が動作する
 - [ ] ダッシュボードが表示される
 

@@ -1,6 +1,6 @@
 # 運用手順書
 
-最終更新: 2026-01-17
+最終更新: 2026-02-06
 
 ## 📋 目次
 
@@ -24,15 +24,15 @@
 │                       GitHub                            │
 │           github.com/VOIQ-dev/apotto                    │
 │                  (master branch)                        │
-└───────────┬────────────────────────┬────────────────────┘
-            │                        │
-            │ push → auto deploy     │ push → auto deploy
-            ▼                        ▼
-┌─────────────────────┐    ┌─────────────────────────────┐
-│      Vercel         │    │        Railway              │
-│  (フロントエンド)    │───▶│  (Playwright Worker)        │
-│   Next.js App       │HTTP│   Auto-Submit Server        │
-└─────────┬───────────┘    └─────────────────────────────┘
+└───────────┬─────────────────────────────────────────────┘
+            │
+            │ push → auto deploy
+            ▼
+┌─────────────────────┐         ┌─────────────────────────┐
+│      Vercel         │  通信    │  Chrome拡張機能          │
+│  (フロントエンド)      │◀───────▶│  (フォーム送信)           │
+│   Next.js App       │         │  ユーザーブラウザ          │
+└─────────┬───────────┘         └─────────────────────────┘
           │
           ▼
 ┌─────────────────────┐
@@ -44,12 +44,13 @@
 
 ### 各コンポーネントの役割
 
-| コンポーネント | 役割                                        | URL                                                         |
-| -------------- | ------------------------------------------- | ----------------------------------------------------------- |
-| **Vercel**     | Next.jsフロントエンド・APIホスティング      | https://apotto-chi.vercel.app                               |
-| **Railway**    | Playwright（ブラウザ自動操作）ワーカー      | Railway ダッシュボードで確認                                |
-| **Supabase**   | PostgreSQLデータベース + ファイルストレージ | https://supabase.com/dashboard/project/xrbegapyfpzomdgiwnwa |
-| **GitHub**     | ソースコード管理                            | https://github.com/VOIQ-dev/apotto                          |
+| コンポーネント     | 役割                                        | URL                                                         |
+| ------------------ | ------------------------------------------- | ----------------------------------------------------------- |
+| **Vercel**         | Next.jsフロントエンド・APIホスティング      | https://apotto-chi.vercel.app                               |
+| **Chrome拡張機能** | フォーム自動送信（並行処理対応）            | Chrome Web Store（公開後）                                  |
+| **Supabase**       | PostgreSQLデータベース + ファイルストレージ | https://supabase.com/dashboard/project/xrbegapyfpzomdgiwnwa |
+| **GitHub**         | ソースコード管理                            | https://github.com/VOIQ-dev/apotto                          |
+| **Railway**        | （使用停止）将来的に予約送信機能で使用予定  | -                                                           |
 
 ---
 
@@ -264,25 +265,28 @@ https://supabase.com/dashboard/project/xrbegapyfpzomdgiwnwa
 
 Vercel > Project Settings > Environment Variables
 
-| 変数名                          | 説明                                | 例                            |
-| ------------------------------- | ----------------------------------- | ----------------------------- |
-| `NEXT_PUBLIC_SUPABASE_URL`      | Supabase プロジェクトURL            | https://xxx.supabase.co       |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase 公開APIキー                | eyJ...                        |
-| `SUPABASE_SERVICE_ROLE_KEY`     | Supabase サービスロールキー（秘密） | eyJ...                        |
-| `SUPABASE_JWT_SECRET`           | Supabase JWT署名キー                | xxx                           |
-| `NEXT_PUBLIC_BASE_URL`          | アプリケーションベースURL           | https://apotto-chi.vercel.app |
-| `AUTO_SUBMIT_WORKER_URL`        | Railway ワーカーURL                 | https://xxx.up.railway.app    |
-| `OPENAI_API_KEY`                | OpenAI APIキー                      | sk-...                        |
-| `SLACK_WEBHOOK_URL`             | Slack通知用WebhookURL               | https://hooks.slack.com/...   |
+| 変数名                            | 説明                                | 例                            |
+| --------------------------------- | ----------------------------------- | ----------------------------- |
+| `NEXT_PUBLIC_SUPABASE_URL`        | Supabase プロジェクトURL            | https://xxx.supabase.co       |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY`   | Supabase 公開APIキー                | eyJ...                        |
+| `SUPABASE_SERVICE_ROLE_KEY`       | Supabase サービスロールキー（秘密） | eyJ...                        |
+| `SUPABASE_JWT_SECRET`             | Supabase JWT署名キー                | xxx                           |
+| `NEXT_PUBLIC_BASE_URL`            | アプリケーションベースURL           | https://apotto-chi.vercel.app |
+| `NEXT_PUBLIC_CHROME_EXTENSION_ID` | Chrome拡張機能ID（Web Store公開後） | abcdef...（32文字）           |
+| `AUTO_SUBMIT_WORKER_URL`          | （廃止）将来の予約送信機能で使用    | -                             |
+| `OPENAI_API_KEY`                  | OpenAI APIキー                      | sk-...                        |
+| `SLACK_WEBHOOK_URL`               | Slack通知用WebhookURL               | https://hooks.slack.com/...   |
 
 ### Railway環境変数
 
-Railway > Project > Variables
+⚠️ **現在使用停止中** - 将来的に予約送信機能を実装する際に使用予定
 
-| 変数名            | 説明                             | 例                            |
-| ----------------- | -------------------------------- | ----------------------------- |
-| `PORT`            | サーバーポート                   | 3001                          |
-| `ALLOWED_ORIGINS` | CORS許可オリジン（カンマ区切り） | https://apotto-chi.vercel.app |
+~~Railway > Project > Variables~~
+
+~~| 変数名 | 説明 | 例 |~~
+~~| ----------------- | -------------------------------- | ----------------------------- |~~
+~~| `PORT` | サーバーポート | 3001 |~~
+~~| `ALLOWED_ORIGINS` | CORS許可オリジン（カンマ区切り） | https://apotto-chi.vercel.app |~~
 
 ### 環境変数の追加・変更手順
 
@@ -317,15 +321,20 @@ Railway > Project > Variables
 
 #### Railway
 
-1. Railway ダッシュボード > プロジェクト選択
-2. 「Deployments」タブ > 「View Logs」
-3. サーバーログを確認
+⚠️ **現在使用停止中** - 将来的に予約送信機能を実装する際に使用予定
+
+#### Chrome拡張機能
+
+1. Chromeブラウザでapottoアプリを開く
+2. Chrome右上の拡張機能アイコン（緑色のロゴ）をクリック
+3. Popupで送信ステータスを確認
 
 **確認項目:**
 
-- Playwright実行エラー
-- ブラウザ起動エラー
-- メモリ不足エラー
+- 待機中と処理中の件数
+- 成功と失敗の件数
+- エラーが発生している企業の詳細
+- 並行タブ数の設定
 
 #### Supabase
 
@@ -363,25 +372,65 @@ Railway > Project > Variables
 1. Slackチャンネルを確認
 2. Webhookテスト: `curl -X POST -H 'Content-type: application/json' --data '{"text":"Test"}' $SLACK_WEBHOOK_URL`
 
+### Chrome拡張機能の管理
+
+#### 拡張機能のバージョン管理
+
+現在のバージョン: **1.2.0**
+
+**更新手順:**
+
+1. `chrome-extension/`フォルダで修正
+2. `manifest.json`のバージョン番号を更新
+3. `yarn build`でビルド
+4. `zip -r apotto-extension.zip dist/`でZIP作成
+5. Chrome Web Storeで新バージョンをアップロード
+6. 審査後、自動的にユーザーに配信
+
+#### 拡張機能の動作確認
+
+1. Chrome拡張機能のアイコンをクリック
+2. Popup表示を確認
+3. 統計情報が正しく表示されるか確認
+4. テスト送信を実行して動作確認
+
+#### トラブルシューティング
+
+**拡張機能が接続できない:**
+
+- Extension IDが環境変数に正しく設定されているか確認
+- `externally_connectable`のmatchesに本番URLが含まれているか確認
+- Chrome Web Storeで公開されているか確認
+
+**並行処理が動作しない:**
+
+- 並行タブ数の設定が正しく保存されているか確認
+- chrome.storage.localの値を確認
+- Service Workerのログを確認
+
 ### 定期メンテナンス作業
 
 #### 週次
 
 - [ ] Vercelデプロイ履歴の確認
-- [ ] Railwayサーバーのヘルスチェック
+- [ ] Chrome拡張機能の動作確認
 - [ ] エラーログの確認
+- [ ] 送信成功率の確認
 
 #### 月次
 
 - [ ] 依存パッケージの更新確認
+- [ ] Chrome拡張機能のバージョン更新検討
 - [ ] Supabaseストレージ使用量確認
 - [ ] ログクレンジング実行（`scripts/cleanup-logs.mjs`）
+- [ ] リード表のデータメンテナンス
 
 #### 四半期
 
 - [ ] アクセス権限の棚卸し
 - [ ] バックアップ設定の確認
 - [ ] セキュリティアップデート適用
+- [ ] Chrome拡張機能の審査・更新
 
 ---
 
