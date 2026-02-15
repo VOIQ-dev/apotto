@@ -15,10 +15,12 @@ const geistMono = Geist_Mono({
 });
 
 // Vercel環境変数を使って動的にベースURLを設定
+// VERCEL_PROJECT_PRODUCTION_URL: OG画像等のURL生成に推奨（Vercel公式ドキュメント）
+// VERCEL_URL はデプロイ固有URLを返すため、Deployment Protectionで401になる
 const getBaseUrl = () => {
-  // Vercel環境
-  if (process.env.VERCEL_URL) {
-    return `https://${process.env.VERCEL_URL}`;
+  // Vercel本番ドメイン（OG画像URL生成に推奨）
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
   }
   // カスタム環境変数
   if (process.env.NEXT_PUBLIC_APP_URL) {
