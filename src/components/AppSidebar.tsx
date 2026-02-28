@@ -220,8 +220,8 @@ export function AppSidebar() {
 
         <div className="pt-2 mt-2 border-t border-border/40">
           <a
-            href="/manual/Apotto_フォーム自動送信マニュアル配布用.docx"
-            download
+            href="/manual/Apotto_%E3%83%95%E3%82%A9%E3%83%BC%E3%83%A0%E8%87%AA%E5%8B%95%E9%80%81%E4%BF%A1%E3%83%9E%E3%83%8B%E3%83%A5%E3%82%A2%E3%83%AB%E9%85%8D%E5%B8%83%E7%94%A8.docx"
+            download="Apotto_フォーム自動送信マニュアル配布用.docx"
             className="group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200 text-muted-foreground hover:text-foreground hover:bg-muted"
           >
             <div className="relative flex h-9 w-9 items-center justify-center rounded-lg border border-transparent bg-muted text-muted-foreground transition-all duration-200 group-hover:text-foreground group-hover:border-border/70 group-hover:scale-105">

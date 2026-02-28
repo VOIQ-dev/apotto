@@ -5,6 +5,8 @@ import { MessageCircle, X, Send, Loader2, Bot, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { QUICK_ANSWERS } from "@/lib/chatbotKnowledge";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 type ChatMessage = {
   id: string;
@@ -191,22 +193,35 @@ export function Chatbot() {
   return (
     <>
       {/* フローティングチャットボタン */}
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className={cn(
-          "fixed bottom-6 right-6 z-50 flex h-14 w-14 items-center justify-center rounded-full shadow-lg transition-all duration-300 hover:scale-110",
-          isOpen
-            ? "bg-gray-600 text-white"
-            : "bg-gradient-to-r from-blue-500 to-purple-600 text-white",
+      <div className="fixed bottom-6 right-6 z-50 group/fab">
+        {!isOpen && (
+          <div className="pointer-events-none absolute bottom-16 right-0 w-52 rounded-xl border border-white/10 bg-gray-900 px-3 py-2.5 shadow-xl opacity-0 translate-y-1 transition-all duration-200 group-hover/fab:opacity-100 group-hover/fab:translate-y-0">
+            <p className="text-xs font-semibold text-white leading-snug">
+              AIアシスタント
+            </p>
+            <p className="mt-0.5 text-[11px] text-gray-400 leading-snug">
+              使い方の質問や営業メールの相談をどうぞ
+            </p>
+            <div className="absolute -bottom-1.5 right-5 h-3 w-3 rotate-45 rounded-sm border-b border-r border-white/10 bg-gray-900" />
+          </div>
         )}
-        aria-label={isOpen ? "チャットを閉じる" : "チャットを開く"}
-      >
-        {isOpen ? (
-          <X className="h-6 w-6" />
-        ) : (
-          <MessageCircle className="h-6 w-6" />
-        )}
-      </button>
+        <button
+          onClick={() => setIsOpen(!isOpen)}
+          className={cn(
+            "flex h-14 w-14 items-center justify-center rounded-full shadow-lg transition-all duration-300 hover:scale-110",
+            isOpen
+              ? "bg-gray-600 text-white"
+              : "bg-gradient-to-r from-blue-500 to-purple-600 text-white",
+          )}
+          aria-label={isOpen ? "チャットを閉じる" : "チャットを開く"}
+        >
+          {isOpen ? (
+            <X className="h-6 w-6" />
+          ) : (
+            <MessageCircle className="h-6 w-6" />
+          )}
+        </button>
+      </div>
 
       {/* チャットウィンドウ */}
       <div
@@ -261,7 +276,72 @@ export function Chatbot() {
                       : "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200",
                   )}
                 >
-                  <p className="whitespace-pre-wrap">{message.content}</p>
+                  {message.role === "user" ? (
+                    <p className="whitespace-pre-wrap">{message.content}</p>
+                  ) : (
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        p: ({ children }) => (
+                          <p className="mb-1.5 last:mb-0 leading-relaxed">
+                            {children}
+                          </p>
+                        ),
+                        h1: ({ children }) => (
+                          <p className="mb-1.5 font-bold text-base">
+                            {children}
+                          </p>
+                        ),
+                        h2: ({ children }) => (
+                          <p className="mb-1.5 font-bold">{children}</p>
+                        ),
+                        h3: ({ children }) => (
+                          <p className="mb-1 font-semibold">{children}</p>
+                        ),
+                        ul: ({ children }) => (
+                          <ul className="mb-1.5 ml-4 list-disc space-y-0.5">
+                            {children}
+                          </ul>
+                        ),
+                        ol: ({ children }) => (
+                          <ol className="mb-1.5 ml-4 list-decimal space-y-0.5">
+                            {children}
+                          </ol>
+                        ),
+                        li: ({ children }) => (
+                          <li className="leading-relaxed">{children}</li>
+                        ),
+                        strong: ({ children }) => (
+                          <strong className="font-semibold">{children}</strong>
+                        ),
+                        code: ({ children }) => (
+                          <code className="rounded bg-black/10 px-1 py-0.5 font-mono text-xs dark:bg-white/10">
+                            {children}
+                          </code>
+                        ),
+                        pre: ({ children }) => (
+                          <pre className="mb-1.5 overflow-x-auto rounded-lg bg-black/10 p-3 font-mono text-xs dark:bg-white/10">
+                            {children}
+                          </pre>
+                        ),
+                        hr: () => (
+                          <hr className="my-2 border-current opacity-20" />
+                        ),
+                        a: ({ href, children }) => (
+                          <a
+                            href={href}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="underline opacity-80 hover:opacity-100"
+                          >
+                            {children}
+                          </a>
+                        ),
+                      }}
+                    >
+                      {message.content}
+                    </ReactMarkdown>
+                  )}
                   {message.isStreaming && (
                     <span className="ml-1 inline-block h-2 w-2 animate-pulse rounded-full bg-current" />
                   )}
