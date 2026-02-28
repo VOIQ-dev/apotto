@@ -1,6 +1,6 @@
 # 運用手順書
 
-最終更新: 2026-02-06
+最終更新: 2026-02-26
 
 ## 📋 目次
 
@@ -103,6 +103,8 @@ master ブランチへのpush
 ---
 
 ## デプロイ環境
+
+https://github.com/VOIQ-dev/apotto
 
 ### 1. Vercel（フロントエンド）
 
@@ -265,17 +267,19 @@ https://supabase.com/dashboard/project/xrbegapyfpzomdgiwnwa
 
 Vercel > Project Settings > Environment Variables
 
-| 変数名                            | 説明                                | 例                            |
-| --------------------------------- | ----------------------------------- | ----------------------------- |
-| `NEXT_PUBLIC_SUPABASE_URL`        | Supabase プロジェクトURL            | https://xxx.supabase.co       |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY`   | Supabase 公開APIキー                | eyJ...                        |
-| `SUPABASE_SERVICE_ROLE_KEY`       | Supabase サービスロールキー（秘密） | eyJ...                        |
-| `SUPABASE_JWT_SECRET`             | Supabase JWT署名キー                | xxx                           |
-| `NEXT_PUBLIC_BASE_URL`            | アプリケーションベースURL           | https://apotto-chi.vercel.app |
-| `NEXT_PUBLIC_CHROME_EXTENSION_ID` | Chrome拡張機能ID（Web Store公開後） | abcdef...（32文字）           |
-| `AUTO_SUBMIT_WORKER_URL`          | （廃止）将来の予約送信機能で使用    | -                             |
-| `OPENAI_API_KEY`                  | OpenAI APIキー                      | sk-...                        |
-| `SLACK_WEBHOOK_URL`               | Slack通知用WebhookURL               | https://hooks.slack.com/...   |
+| 変数名                            | 説明                                | 例                                  |
+| --------------------------------- | ----------------------------------- | ----------------------------------- |
+| `NEXT_PUBLIC_SUPABASE_URL`        | Supabase プロジェクトURL            | https://xxx.supabase.co             |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY`   | Supabase 公開APIキー                | eyJ...                              |
+| `SUPABASE_SERVICE_ROLE_KEY`       | Supabase サービスロールキー（秘密） | eyJ...                              |
+| `SUPABASE_JWT_SECRET`             | Supabase JWT署名キー                | xxx                                 |
+| `NEXT_PUBLIC_BASE_URL`            | アプリケーションベースURL           | https://apotto-chi.vercel.app       |
+| `NEXT_PUBLIC_CHROME_EXTENSION_ID` | Chrome拡張機能ID（Web Store公開後） | abcdef...（32文字）                 |
+| `AUTO_SUBMIT_WORKER_URL`          | （廃止）将来の予約送信機能で使用    | -                                   |
+| `OPENAI_API_KEY`                  | OpenAI APIキー                      | sk-...                              |
+| `OPENAI_API_URL`                  | OpenAI API URL（カスタム）          | https://api.openai.com/v1/responses |
+| `OPENAI_SALES_MODEL`              | AI文面生成モデル                    | gpt-5-mini（デフォルト）            |
+| `SLACK_WEBHOOK_URL`               | Slack通知用WebhookURL               | https://hooks.slack.com/...         |
 
 ### Railway環境変数
 
@@ -334,7 +338,33 @@ Vercel > Project Settings > Environment Variables
 - 待機中と処理中の件数
 - 成功と失敗の件数
 - エラーが発生している企業の詳細
-- 並行タブ数の設定
+- 同時送信数の設定
+
+#### 送信結果ログ
+
+送信結果は `server/submission-results.log` に自動記録されます。
+
+**ログ確認方法:**
+
+```bash
+# 最新の送信結果を確認
+tail -100 server/submission-results.log
+```
+
+**失敗カテゴリ:**
+
+| カテゴリ             | 説明                           |
+| -------------------- | ------------------------------ |
+| FORM_NOT_FOUND       | フォームが見つからない         |
+| BUTTON_NOT_FOUND     | 送信ボタンが見つからない       |
+| VALIDATION_ERROR     | バリデーションエラー           |
+| CAPTCHA_BLOCKED      | CAPTCHAにより送信不可          |
+| CAPTCHA_SPAM         | reCAPTCHA v3によるスパム判定   |
+| ALERT_BLOCKED        | ページスクリプトによるブロック |
+| DISABLED_BUTTON      | 送信ボタンが無効化             |
+| TIMEOUT              | タイムアウト                   |
+| CONTENT_SCRIPT_ERROR | コンテンツスクリプトエラー     |
+| UNKNOWN              | その他のエラー                 |
 
 #### Supabase
 

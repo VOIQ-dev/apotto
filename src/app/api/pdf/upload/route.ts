@@ -51,6 +51,22 @@ export async function POST(request: NextRequest) {
 
     const supabase = createSupabaseServiceClient();
 
+    // 同名ファイルの重複チェック
+    const { data: existing } = await supabase
+      .from("pdfs")
+      .select("id")
+      .eq("company_id", companyId)
+      .eq("original_filename", file.name)
+      .eq("is_deleted", false)
+      .maybeSingle();
+
+    if (existing) {
+      return json(
+        { error: `「${file.name}」は既に登録されています。` },
+        { status: 409 },
+      );
+    }
+
     // ユニークトークン生成
     const token = crypto.randomUUID();
     const storagePath = `${companyId}/${token}.pdf`;

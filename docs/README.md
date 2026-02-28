@@ -25,12 +25,21 @@
 - pre-commit / commit-msg フックの説明
 - トラブルシューティング
 
+## 📋 要件・仕様ドキュメント
+
+### [要件定義書](./requirements.md)
+
+- 機能要件・アーキテクチャ仕様
+- Chrome拡張機能によるフォーム自動送信の詳細仕様
+- フォーム自動入力の対応項目一覧
+- ページ除外・CAPTCHA検出・確認画面対応
+
 ## 🚀 運用ドキュメント
 
 ### [本番環境構築手順書](./deployment-guide.md)
 
 - Supabaseセットアップ
-- Vercel/Railwayデプロイ手順
+- Vercelデプロイ手順
 - 環境変数設定
 - 動作確認方法
 - トラブルシューティング
@@ -40,7 +49,8 @@
 - システム構成概要
 - リポジトリ管理
 - アクセス権限管理
-- 日常運用（ログ確認・監視）
+- 環境変数一覧（OPENAI_API_KEY, OPENAI_SALES_MODEL等）
+- 日常運用（ログ確認・送信結果ログ）
 - 障害対応フロー
 - 緊急連絡先
 
@@ -113,8 +123,11 @@ yarn dev
 
 ### テスト仕様書
 
-- [単体テスト仕様](./test-specifications/unit-test-specification.md)
-- [負荷・耐久テスト](./test-specifications/load-and-endurance-test.md)
+- [Chrome拡張機能テスト仕様](./test-specifications/chrome-extension-test.md) — フォーム自動送信・並行処理・CAPTCHA検出・ページ除外のテスト仕様
+- [単体テスト仕様](./test-specifications/unit-test-specification.md) — ユニットテスト仕様
+- [負荷・耐久テスト](./test-specifications/load-and-endurance-test.md) — 負荷テスト仕様
+
+> **フォルダ**: `docs/test-specifications/`
 
 ## 📖 その他のドキュメント
 
@@ -198,6 +211,7 @@ git commit --no-verify -m "feat: 緊急修正"
 
 ## 📝 更新履歴
 
+- 2026-02-26: Chrome拡張テスト仕様・要件定義書をインデックスに追加、最新機能対応（並行数1-10、CAPTCHA検出、ページ除外等）
 - 2026-01-19: テストチェックリストを追加（網羅的なテスト項目リスト）
 - 2026-01-17: 運用手順書・本番環境構築手順書を追加
 - 2026-01-17: 営業メール生成API ドキュメント追加（API仕様書、操作マニュアル）

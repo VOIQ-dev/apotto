@@ -179,17 +179,98 @@ export async function getMaxConcurrent(): Promise<number> {
 }
 
 /**
- * 並行タブ数を設定
+ * 並行タブ数を設定（成功時は確定値を返す、失敗時はnull）
  */
-export async function setMaxConcurrent(value: number): Promise<boolean> {
-  if (!isExtensionAvailable()) return false;
+export async function setMaxConcurrent(
+  value: number,
+): Promise<{ success: boolean; appliedValue: number }> {
+  if (!isExtensionAvailable()) return { success: false, appliedValue: 3 };
   try {
     const response = await sendToExtension({
       type: "SET_MAX_CONCURRENT",
       maxConcurrent: value,
     });
-    return response?.success === true;
+    if (response?.success === true) {
+      return {
+        success: true,
+        appliedValue: (response.maxConcurrent as number) || value,
+      };
+    }
+    const current = await getMaxConcurrent();
+    return { success: false, appliedValue: current };
   } catch {
-    return false;
+    return { success: false, appliedValue: 3 };
+  }
+}
+
+/**
+ * 検索ステップごとのログ
+ */
+export interface SearchStepLog {
+  url: string;
+  depth: number;
+  isExternal: boolean;
+  hasForm: boolean;
+  formScore?: number;
+  formReasons?: string[];
+  formCount?: number;
+  inputCount?: number;
+  linksFound?: number;
+  linkUrls?: string[];
+  error?: string;
+  hasCaptcha?: boolean;
+  captchaType?: string;
+  captchaIsBlocker?: boolean;
+}
+
+/**
+ * お問い合わせフォームURL検索結果の型
+ */
+export interface ContactFormSearchResult {
+  sourceUrl: string;
+  contactFormUrl: string | null;
+  found: boolean;
+  depth: number;
+  error?: string;
+  searchLog: SearchStepLog[];
+  totalPagesChecked: number;
+  initialLinksFound: number;
+}
+
+/**
+ * Chrome拡張機能経由でお問い合わせフォームURLを多階層検索
+ * 同一ドメイン: 最大3階層、外部ドメイン: 最大1階層
+ */
+export async function searchContactFormsViaExtension(urls: string[]): Promise<{
+  success: boolean;
+  results?: ContactFormSearchResult[];
+  error?: string;
+}> {
+  if (!isExtensionAvailable()) {
+    return { success: false, error: "Chrome拡張機能が利用できません" };
+  }
+
+  try {
+    const response = await sendToExtension({
+      type: "SEARCH_CONTACT_FORMS",
+      urls,
+    });
+
+    if (response?.success) {
+      return {
+        success: true,
+        results: response.results as ContactFormSearchResult[],
+      };
+    }
+
+    return {
+      success: false,
+      error: (response?.error as string) || "Unknown error",
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+    };
   }
 }

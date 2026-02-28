@@ -57,6 +57,7 @@ import {
   getExtensionStatus,
   getMaxConcurrent,
   setMaxConcurrent as saveMaxConcurrentToExtension,
+  searchContactFormsViaExtension,
   type ExtensionQueueItem,
 } from "@/lib/chromeExtension";
 
@@ -365,6 +366,13 @@ export default function AiCustomPage() {
     createDefaultSenderProfile,
   );
   const [cards, setCards] = useState<CompanyCard[]>([]);
+  const cardsRef = useRef<CompanyCard[]>(cards);
+  cardsRef.current = cards;
+
+  const handleGenerateEntryRef = useRef<
+    (cardId: string, snapshot?: CompanyCard) => Promise<string>
+  >(null!);
+
   const [uploadState, setUploadState] = useState<AiUploadState>({
     importedCount: 0,
     skippedCount: 0,
@@ -405,8 +413,10 @@ export default function AiCustomPage() {
 
   // 送信方法は拡張機能に固定（予約送信は別途実装予定）
   const [extensionAvailable, setExtensionAvailable] = useState(false);
-  // 並行タブ数（デフォルト3）
+  // Chrome拡張フォーム送信の並行タブ数（デフォルト3）
   const [maxConcurrent, setMaxConcurrent] = useState(3);
+  // AI文面生成の並行実行数（デフォルト5）
+  const [aiConcurrent, setAiConcurrent] = useState(5);
 
   // ダークモード検出
   useEffect(() => {
@@ -462,7 +472,14 @@ export default function AiCustomPage() {
   const handleMaxConcurrentChange = async (value: number) => {
     setMaxConcurrent(value);
     if (extensionAvailable) {
-      await saveMaxConcurrentToExtension(value);
+      const result = await saveMaxConcurrentToExtension(value);
+      if (!result.success || result.appliedValue !== value) {
+        setMaxConcurrent(result.appliedValue);
+        showToast(
+          `並行数の反映に失敗したため ${result.appliedValue} に戻しました（拡張機能のリロードが必要な可能性があります）`,
+          "warning",
+        );
+      }
     }
   };
 
@@ -967,7 +984,8 @@ export default function AiCustomPage() {
 
   const handleGenerateEntry = useCallback(
     async (cardId: string, snapshot?: CompanyCard) => {
-      const target = snapshot ?? cards.find((card) => card.id === cardId);
+      const target =
+        snapshot ?? cardsRef.current.find((card) => card.id === cardId);
       if (!target) {
         throw new Error("対象のカードが見つかりませんでした。");
       }
@@ -1036,26 +1054,35 @@ export default function AiCustomPage() {
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let accumulated = "";
+      let lastFlush = 0;
+      const FLUSH_INTERVAL = 80;
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        accumulated += chunk;
-        const current = accumulated;
+      const flushCards = (text: string) => {
         setCards((prev) =>
           prev.map((card) =>
             card.id === cardId
               ? {
                   ...card,
-                  generatedMessage: current,
+                  generatedMessage: text,
                   status: "generating",
                   errorMessage: undefined,
                 }
               : card,
           ),
         );
+      };
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        accumulated += decoder.decode(value, { stream: true });
+        const now = Date.now();
+        if (now - lastFlush >= FLUSH_INTERVAL) {
+          lastFlush = now;
+          flushCards(accumulated);
+        }
       }
+      flushCards(accumulated);
 
       const finalMessage = accumulated.trim();
       if (!finalMessage) {
@@ -1088,8 +1115,9 @@ export default function AiCustomPage() {
       ]);
       return finalMessage;
     },
-    [cards, pdfAssets, senderProfile, productContext, selectedPdfIdList],
+    [pdfAssets, senderProfile, productContext, selectedPdfIdList],
   );
+  handleGenerateEntryRef.current = handleGenerateEntry;
 
   useEffect(() => {
     if (queueState.running) return;
@@ -1097,7 +1125,8 @@ export default function AiCustomPage() {
     if (!nextId) return;
 
     setQueueState((prev) => ({ ...prev, running: true, error: undefined }));
-    void handleGenerateEntry(nextId)
+    void handleGenerateEntryRef
+      .current(nextId)
       .catch((error) => {
         const message =
           error instanceof Error
@@ -1118,7 +1147,7 @@ export default function AiCustomPage() {
           lastProcessed: nextId,
         }));
       });
-  }, [handleGenerateEntry, queueState.pendingIds, queueState.running]);
+  }, [queueState.pendingIds, queueState.running]);
 
   useEffect(() => {
     if (autoRunStatus === "done") {
@@ -1350,6 +1379,21 @@ export default function AiCustomPage() {
         );
       }
 
+      // 送信開始時に並行数を必ず再同期（UI表示と拡張機能の実効値ズレを防止）
+      const concurrentResult =
+        await saveMaxConcurrentToExtension(maxConcurrent);
+      if (
+        !concurrentResult.success ||
+        concurrentResult.appliedValue !== maxConcurrent
+      ) {
+        setMaxConcurrent(concurrentResult.appliedValue);
+        pushLog(
+          `⚠️ 並行数の反映に失敗（指定 ${maxConcurrent} → 実効 ${concurrentResult.appliedValue}）`,
+        );
+      } else {
+        pushLog(`🧵 並行数を ${concurrentResult.appliedValue} に設定しました`);
+      }
+
       pushLog(`🔌 Chrome拡張機能で送信開始（${targets.length}件）`);
 
       const extensionItems: ExtensionQueueItem[] = batchItems.map((item) => ({
@@ -1387,10 +1431,16 @@ export default function AiCustomPage() {
       const baselineStatus = await getExtensionStatus();
       const baselineCompleted = baselineStatus?.completed || 0;
       const baselineFailed = baselineStatus?.failed || 0;
+      const baselineFailedIds = new Set(
+        (baselineStatus?.items || [])
+          .filter((i) => i.status === "failed")
+          .map((i) => i.id),
+      );
 
       // 拡張機能の送信完了をポーリングで待つ（無期限）
       const initialPending = extResult.count || targets.length;
       let lastLoggedProgress = 0;
+      const loggedFailedIds = new Set<string>();
 
       const pollInterval = 2000; // 2秒ごとにチェック
 
@@ -1408,6 +1458,25 @@ export default function AiCustomPage() {
         const currentFailed = status.failed - baselineFailed;
         const totalProcessed = currentCompleted + currentFailed;
         const remaining = status.pending + status.processing;
+
+        // 新しく失敗したアイテムのエラー詳細をログ出力
+        const failedItems = (status.items || []).filter(
+          (i) =>
+            i.status === "failed" &&
+            !baselineFailedIds.has(i.id) &&
+            !loggedFailedIds.has(i.id),
+        );
+        for (const item of failedItems) {
+          loggedFailedIds.add(item.id);
+          pushLog(`  ✗ ${item.company || item.url}`);
+          if (item.error) {
+            // エラーメッセージが改行を含む場合（詳細ログ）、各行をインデント付きで出力
+            const errorLines = item.error.split("\n");
+            for (const line of errorLines) {
+              pushLog(`    ${line}`);
+            }
+          }
+        }
 
         // 進捗をログ出力（変化があった時のみ）
         if (totalProcessed > lastLoggedProgress) {
@@ -1428,7 +1497,14 @@ export default function AiCustomPage() {
 
       return { successCount: 0, failedCount: targets.length };
     },
-    [pushLog, selectedPdfIdList, senderProfile, extensionAvailable],
+    [
+      pushLog,
+      selectedPdfIdList,
+      senderProfile,
+      extensionAvailable,
+      maxConcurrent,
+      showToast,
+    ],
   );
 
   const handleSimulateSend = useCallback(
@@ -1460,8 +1536,9 @@ export default function AiCustomPage() {
       try {
         await handleBatchSend(targets, origin);
         setLastSendFinishedAt(new Date().toISOString());
-        // 送信結果を反映するためリード表を再読み込み
+        // 拡張機能のDB更新が確実に完了するまで待機してからリード表を再読み込み
         pushLog("📋 送信結果をリード表に反映中...");
+        await new Promise((resolve) => setTimeout(resolve, 3000));
         await fetchLeads();
         pushLog("✅ リード表更新完了");
       } catch (err) {
@@ -1594,10 +1671,9 @@ export default function AiCustomPage() {
           }
         });
 
-        // すべてのAI生成タスクを並行実行（最大3つ同時）
-        const concurrencyLimit = 3;
-        for (let i = 0; i < generateTasks.length; i += concurrencyLimit) {
-          const chunk = generateTasks.slice(i, i + concurrencyLimit);
+        // すべてのAI生成タスクを並行実行
+        for (let i = 0; i < generateTasks.length; i += aiConcurrent) {
+          const chunk = generateTasks.slice(i, i + aiConcurrent);
           await Promise.all(chunk);
         }
 
@@ -1625,8 +1701,9 @@ export default function AiCustomPage() {
           pendingIds: [],
           running: false,
         }));
-        // 送信結果を反映するためリード表を再読み込み
+        // 拡張機能のDB更新が確実に完了するまで待機してからリード表を再読み込み
         pushLog("📋 送信結果をリード表に反映中...");
+        await new Promise((resolve) => setTimeout(resolve, 3000));
         await fetchLeads();
         pushLog("✅ リード表更新完了");
       } catch (error) {
@@ -1644,6 +1721,7 @@ export default function AiCustomPage() {
       }
     },
     [
+      aiConcurrent,
       autoRunStatus,
       handleBatchSend,
       handleGenerateEntry,
@@ -1866,10 +1944,9 @@ export default function AiCustomPage() {
       }
     });
 
-    // すべてのAI生成タスクを並行実行（最大3つ同時）
-    const concurrencyLimit = 3;
-    for (let i = 0; i < generateTasks.length; i += concurrencyLimit) {
-      const chunk = generateTasks.slice(i, i + concurrencyLimit);
+    // すべてのAI生成タスクを並行実行
+    for (let i = 0; i < generateTasks.length; i += aiConcurrent) {
+      const chunk = generateTasks.slice(i, i + aiConcurrent);
       await Promise.all(chunk);
     }
 
@@ -1884,6 +1961,7 @@ export default function AiCustomPage() {
       `🎉 AI文言生成完了（${totalGenerated}/${cardsToGenerate.length}件）`,
     );
   }, [
+    aiConcurrent,
     handleGenerateEntry,
     leads,
     pushLog,
@@ -1924,6 +2002,196 @@ export default function AiCustomPage() {
       void runAutoWorkflow(cardsToSend);
     }, 0);
   }, [leads, pushLog, runAutoWorkflow, selectedLeadIds, showToast]);
+
+  // --- お問い合わせフォームURL検索（Chrome拡張機能経由） ---
+  const [isSearchingContactForms, setIsSearchingContactForms] = useState(false);
+
+  const handleSearchContactForms = useCallback(async () => {
+    if (selectedLeadIds.size === 0) {
+      showToast("検索する企業を選択してください", "warning");
+      return;
+    }
+
+    if (!extensionAvailable) {
+      showToast("Chrome拡張機能が接続されていません", "error");
+      return;
+    }
+
+    const selectedLeads = leads.filter((lead) => selectedLeadIds.has(lead.id));
+    const urls = selectedLeads
+      .map((lead) => lead.homepageUrl)
+      .filter((u) => u && u.trim() !== "");
+
+    if (urls.length === 0) {
+      showToast("選択した企業にURLが設定されていません", "warning");
+      return;
+    }
+
+    setIsSearchingContactForms(true);
+    const totalCount = urls.length;
+    pushLog(
+      `${totalCount}件のURLでお問い合わせフォーム検索を開始（拡張機能経由）`,
+    );
+
+    try {
+      const response = await searchContactFormsViaExtension(urls);
+
+      if (!response.success || !response.results) {
+        throw new Error(response.error ?? "拡張機能からの応答が不正です");
+      }
+
+      const results = response.results;
+
+      // コンソールにJSON出力
+      console.log(
+        "=== お問い合わせフォームURL検索結果 ===",
+        JSON.stringify(results, null, 2),
+      );
+
+      // ログにサマリーを出力
+      const foundCount = results.filter(
+        (r: { found: boolean }) => r.found,
+      ).length;
+      pushLog(`フォームURL検索完了: ${totalCount}件中${foundCount}件成功`);
+
+      for (const result of results) {
+        const r = result as {
+          sourceUrl: string;
+          contactFormUrl?: string;
+          found: boolean;
+          error?: string;
+          depth?: number;
+          searchLog?: {
+            url: string;
+            depth: number;
+            isExternal: boolean;
+            hasForm: boolean;
+            formScore?: number;
+            formReasons?: string[];
+            formCount?: number;
+            inputCount?: number;
+            linksFound?: number;
+            linkUrls?: string[];
+            error?: string;
+            hasCaptcha?: boolean;
+            captchaType?: string;
+            captchaIsBlocker?: boolean;
+          }[];
+          totalPagesChecked?: number;
+          initialLinksFound?: number;
+        };
+        if (r.found) {
+          pushLog(
+            `  ✓ ${r.sourceUrl} → ${r.contactFormUrl}${r.depth != null ? ` (深さ${r.depth})` : ""}`,
+          );
+        } else {
+          // --- 失敗時の詳細ログ出力 ---
+          pushLog(`  ✗ ${r.sourceUrl}`);
+
+          if (r.error) {
+            pushLog(`    エラー: ${r.error}`);
+          }
+
+          if (!r.searchLog || r.searchLog.length === 0) {
+            pushLog(`    ※ 検索ログなし（ページ読み込みに失敗した可能性）`);
+            continue;
+          }
+
+          // 初期ページ（深さ0）
+          const initialStep = r.searchLog.find((s) => s.depth === 0);
+          if (initialStep) {
+            const formInfo =
+              initialStep.formCount != null
+                ? `form=${initialStep.formCount}, input=${initialStep.inputCount ?? 0}`
+                : "";
+            const scoreInfo =
+              initialStep.formScore != null
+                ? `, score=${initialStep.formScore}`
+                : "";
+            pushLog(
+              `    [初期ページ] ${initialStep.url} → フォーム${initialStep.hasForm ? "有" : "無"}${formInfo || scoreInfo ? ` (${formInfo}${scoreInfo})` : ""}`,
+            );
+
+            // CAPTCHA警告
+            if (initialStep.hasCaptcha) {
+              pushLog(
+                `    ⚠ ${initialStep.captchaType ?? "CAPTCHA"}検出${initialStep.captchaIsBlocker ? "（自動送信不可）" : "（送信可能）"}`,
+              );
+            }
+
+            // 発見されたリンク一覧
+            if (initialStep.linkUrls && initialStep.linkUrls.length > 0) {
+              pushLog(
+                `    [検出リンク] ${initialStep.linksFound ?? initialStep.linkUrls.length}件:`,
+              );
+              for (const linkUrl of initialStep.linkUrls) {
+                pushLog(`      - ${linkUrl}`);
+              }
+            } else {
+              pushLog(
+                `    [検出リンク] 0件 ※ お問い合わせ関連のリンクがページ上に見つかりませんでした`,
+              );
+            }
+          }
+
+          // 深さ1以降の探索結果
+          const deepSteps = r.searchLog.filter((s) => s.depth > 0);
+          if (deepSteps.length > 0) {
+            // 最大深さを計算
+            const maxDepthReached = Math.max(...deepSteps.map((s) => s.depth));
+            const hasExternal = deepSteps.some((s) => s.isExternal);
+            const sameDomainSteps = deepSteps.filter((s) => !s.isExternal);
+            const externalSteps = deepSteps.filter((s) => s.isExternal);
+
+            pushLog(
+              `    [探索結果] 同一ドメイン${maxDepthReached}階層${hasExternal ? ` + 外部ドメイン${externalSteps.length}件` : ""}を探索:`,
+            );
+
+            // 全ステップを深さ順に表示（同一ドメイン・外部を区別）
+            for (const step of deepSteps) {
+              const info: string[] = [];
+              if (step.formCount != null) info.push(`form=${step.formCount}`);
+              if (step.inputCount != null)
+                info.push(`input=${step.inputCount}`);
+              if (step.formScore != null) info.push(`score=${step.formScore}`);
+              if (step.hasCaptcha)
+                info.push(
+                  `${step.captchaType ?? "CAPTCHA"}${step.captchaIsBlocker ? "⚠自動送信不可" : ""}`,
+                );
+              if (step.error) info.push(`error: ${step.error}`);
+              const domainLabel = step.isExternal
+                ? "外部"
+                : `深さ${step.depth}`;
+              pushLog(
+                `      ${domainLabel}: ${step.url} → フォーム${step.hasForm ? "有" : "無"}${info.length > 0 ? ` (${info.join(", ")})` : ""}`,
+              );
+              // このページからさらに発見されたリンクを表示
+              if (step.linkUrls && step.linkUrls.length > 0) {
+                pushLog(
+                  `        → 追加リンク${step.linksFound ?? step.linkUrls.length}件: ${step.linkUrls.join(", ")}`,
+                );
+              }
+            }
+
+            // サマリー
+            pushLog(
+              `    [結果] ${r.totalPagesChecked ?? r.searchLog.length}ページ確認${sameDomainSteps.length > 0 ? `（同一ドメイン${sameDomainSteps.length}件` : ""}${externalSteps.length > 0 ? `、外部${externalSteps.length}件）` : "）"}→ フォーム見つからず`,
+            );
+          } else if (r.initialLinksFound === 0) {
+            pushLog(
+              `    [結果] リンクが見つからなかったため、探索を終了しました`,
+            );
+          }
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "不明なエラー";
+      showToast(`フォームURL検索エラー: ${msg}`, "error");
+      pushLog(`フォームURL検索エラー: ${msg}`);
+    } finally {
+      setIsSearchingContactForms(false);
+    }
+  }, [leads, selectedLeadIds, showToast, pushLog, extensionAvailable]);
 
   // 選択したリードを削除
   const handleDeleteSelectedLeads = useCallback(async () => {
@@ -2737,7 +3005,13 @@ export default function AiCustomPage() {
                 checkboxes: true,
                 headerCheckbox: true,
                 enableClickSelection: false,
-                selectAll: "currentPage", // 現在のページのみ選択
+                selectAll: "currentPage",
+              }}
+              selectionColumnDef={{
+                pinned: "left",
+                width: 50,
+                maxWidth: 50,
+                suppressHeaderMenuButton: true,
               }}
               animateRows={true}
               pagination={true}
@@ -2762,33 +3036,56 @@ export default function AiCustomPage() {
             </span>
 
             <div className="flex items-center gap-2">
-              {/* 並行タブ数選択 */}
-              <div className="flex items-center gap-1.5">
-                <label className="text-[10px] text-muted-foreground whitespace-nowrap">
-                  並行数:
-                </label>
-                <select
-                  value={maxConcurrent}
-                  onChange={(e) =>
-                    void handleMaxConcurrentChange(Number(e.target.value))
-                  }
-                  disabled={isSending || !extensionAvailable}
-                  className="text-xs px-2 py-1 rounded border border-border bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 disabled:cursor-not-allowed"
-                  title={
-                    !extensionAvailable
-                      ? "拡張機能が未接続です"
-                      : isSending
-                        ? "送信中は変更できません"
-                        : "同時に処理するタブ数"
-                  }
-                >
-                  <option value={1}>1</option>
-                  <option value={2}>2</option>
-                  <option value={3}>3</option>
-                  <option value={4}>4</option>
-                  <option value={5}>5</option>
-                </select>
-              </div>
+              {/* 同時送信タブ数選択 */}
+              <Tooltip
+                label={
+                  <div className="text-xs leading-relaxed">
+                    <div className="font-semibold mb-1">同時送信タブ数</div>
+                    <div>複数の企業フォームを同時並行で送信する</div>
+                    <div>タブ数です。増やすほど処理が速くなりますが</div>
+                    <div>PCへの負荷も高くなります。</div>
+                    <div className="mt-1 text-blue-400 font-semibold">
+                      推奨: 3〜5
+                    </div>
+                  </div>
+                }
+                position="top-end"
+                withArrow
+                multiline
+                w={215}
+              >
+                <div className="flex items-center gap-1.5">
+                  <label className="text-xs text-muted-foreground whitespace-nowrap cursor-help underline decoration-dotted underline-offset-2">
+                    同時送信数:
+                  </label>
+                  <select
+                    value={maxConcurrent}
+                    onChange={(e) =>
+                      void handleMaxConcurrentChange(Number(e.target.value))
+                    }
+                    disabled={isSending || !extensionAvailable}
+                    className="text-xs px-2 py-1 rounded border border-border bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                    title={
+                      !extensionAvailable
+                        ? "拡張機能が未接続です"
+                        : isSending
+                          ? "送信中は変更できません"
+                          : undefined
+                    }
+                  >
+                    <option value={1}>1</option>
+                    <option value={2}>2</option>
+                    <option value={3}>3</option>
+                    <option value={4}>4</option>
+                    <option value={5}>5</option>
+                    <option value={6}>6</option>
+                    <option value={7}>7</option>
+                    <option value={8}>8</option>
+                    <option value={9}>9</option>
+                    <option value={10}>10</option>
+                  </select>
+                </div>
+              </Tooltip>
 
               <button
                 type="button"

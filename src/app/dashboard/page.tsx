@@ -19,6 +19,7 @@ import {
   Radar,
   RadarChart,
   ResponsiveContainer,
+  Scatter,
   Tooltip,
   XAxis,
   YAxis,
@@ -577,15 +578,15 @@ export default function DashboardPage() {
                     name="完読率(%)"
                     fill="#10b981"
                     radius={[4, 4, 0, 0]}
+                    maxBarSize={30}
                   />
-                  <Line
+                  <Bar
                     yAxisId="right"
-                    type="monotone"
                     dataKey="avgTime"
                     name="平均滞在(秒)"
-                    stroke="#0ea5e9"
-                    strokeWidth={3}
-                    dot={{ r: 4 }}
+                    fill="#f59e0b"
+                    radius={[4, 4, 0, 0]}
+                    maxBarSize={30}
                   />
                 </ComposedChart>
               </ResponsiveContainer>

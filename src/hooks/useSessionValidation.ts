@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 
 /**
@@ -9,26 +9,24 @@ import { useRouter } from "next/navigation";
  */
 export function useSessionValidation() {
   const router = useRouter();
+  const routerRef = useRef(router);
+  routerRef.current = router;
 
   const handleSessionInvalid = useCallback(async () => {
-    // ログアウトAPIを呼び出してCookieをクリア
     try {
       await fetch("/api/auth/logout", { method: "POST" });
     } catch {
       // ログアウト失敗しても続行
     }
-    // ログインページへリダイレクト
-    router.replace("/login?reason=session_invalid");
-  }, [router]);
+    routerRef.current.replace("/login?reason=session_invalid");
+  }, []);
 
-  // グローバルなfetchインターセプター
   useEffect(() => {
     const originalFetch = window.fetch;
 
     window.fetch = async (...args) => {
       const response = await originalFetch(...args);
 
-      // 401エラーでセッション無効の場合
       if (response.status === 401) {
         try {
           const clonedResponse = response.clone();

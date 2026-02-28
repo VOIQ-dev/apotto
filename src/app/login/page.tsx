@@ -3,10 +3,12 @@
 import { useRouter } from "next/navigation";
 import { useSearchParams } from "next/navigation";
 import { FormEvent, Suspense, useMemo, useState } from "react";
+import { useUser } from "@/contexts/UserContext";
 
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { refresh } = useUser();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -47,6 +49,8 @@ function LoginForm() {
       if (!res.ok) {
         throw new Error(data.error || "ログインに失敗しました");
       }
+      // ログイン成功後、ユーザー情報を取得してから画面遷移
+      await refresh();
       router.push("/ai-custom");
     } catch (e) {
       setError(e instanceof Error ? e.message : "ログインに失敗しました");

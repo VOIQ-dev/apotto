@@ -631,11 +631,6 @@ export default function App() {
         </div>
       )}
 
-      {/* フッター */}
-      <div className="p-3 border-t border-[var(--border)] bg-[var(--card)] text-center text-[10px] text-[var(--muted-foreground)]">
-        apotto v1.2.0
-      </div>
-
       {/* 削除確認モーダル */}
       {showDeleteModal && (
         <div

@@ -15,6 +15,8 @@ type PdfDocument = {
 
 const MAX_STORAGE_BYTES = 15 * 1024 * 1024; // 15MB
 
+type ErrorModal = { title: string; message: string };
+
 export default function PdfAssetsPage() {
   const [pdfs, setPdfs] = useState<PdfDocument[]>([]);
   const [isDragging, setIsDragging] = useState(false);
@@ -22,6 +24,11 @@ export default function PdfAssetsPage() {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [isUploading, setIsUploading] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [errorModal, setErrorModal] = useState<ErrorModal | null>(null);
+
+  const showError = (title: string, message: string) => {
+    setErrorModal({ title, message });
+  };
 
   // PDF一覧を取得
   const fetchPdfs = useCallback(async () => {
@@ -97,16 +104,30 @@ export default function PdfAssetsPage() {
 
     for (const file of Array.from(files)) {
       if (file.type !== "application/pdf") {
-        alert(`${file.name} はPDFではありません。`);
-        continue;
-      }
-      if (totalSize + file.size > MAX_STORAGE_BYTES) {
-        alert("容量制限（15MB）を超えるためアップロードできません。");
+        showError(
+          "ファイル形式エラー",
+          `「${file.name}」はPDFではありません。PDFファイルのみアップロード可能です。`,
+        );
         continue;
       }
       if (file.size > MAX_STORAGE_BYTES) {
-        alert(
-          `${file.name} のファイルサイズが15MBを超えているため、アップロードできません。`,
+        showError(
+          "ファイルサイズ超過",
+          `「${file.name}」のファイルサイズが15MBを超えているため、アップロードできません。`,
+        );
+        continue;
+      }
+      if (totalSize + file.size > MAX_STORAGE_BYTES) {
+        showError(
+          "ストレージ容量不足",
+          `ストレージの残り容量が不足しているため「${file.name}」をアップロードできません。不要なPDFを削除してから再度お試しください。`,
+        );
+        continue;
+      }
+      if (pdfs.some((p) => p.name === file.name)) {
+        showError(
+          "同名ファイルが存在します",
+          `「${file.name}」は既に登録されています。別のファイル名に変更してからアップロードしてください。`,
         );
         continue;
       }
@@ -122,7 +143,11 @@ export default function PdfAssetsPage() {
 
         if (!res.ok) {
           const err = await res.json();
-          alert(`アップロード失敗: ${err.error || "不明なエラー"}`);
+          const isDuplicate = res.status === 409;
+          showError(
+            isDuplicate ? "同名ファイルが存在します" : "アップロード失敗",
+            err.error || "不明なエラーが発生しました。",
+          );
           continue;
         }
 
@@ -144,7 +169,10 @@ export default function PdfAssetsPage() {
         setPdfs((prev) => [newPdf, ...prev]);
       } catch (err) {
         console.error("Upload error:", err);
-        alert("アップロード中にエラーが発生しました。");
+        showError(
+          "アップロードエラー",
+          "アップロード中に予期しないエラーが発生しました。しばらくしてから再度お試しください。",
+        );
       }
     }
 
@@ -161,11 +189,14 @@ export default function PdfAssetsPage() {
       if (res.ok) {
         setPdfs((prev) => prev.filter((pdf) => pdf.id !== deleteTarget.id));
       } else {
-        alert("削除に失敗しました");
+        showError("削除失敗", "PDFの削除に失敗しました。再度お試しください。");
       }
     } catch (err) {
       console.error("Delete error:", err);
-      alert("削除中にエラーが発生しました");
+      showError(
+        "削除エラー",
+        "削除中に予期しないエラーが発生しました。しばらくしてから再度お試しください。",
+      );
     }
     setDeleteTarget(null);
   };
@@ -349,18 +380,30 @@ export default function PdfAssetsPage() {
         </section>
       </main>
 
-      {deleteTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+      {errorModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={() => setErrorModal(null)}
+        >
           <div
-            className="w-full max-w-md rounded-2xl border border-border bg-slate-950/95 p-6 shadow-[0_20px_60px_rgba(0,0,0,0.6)] space-y-5"
+            className="w-full max-w-sm rounded-2xl p-6 shadow-2xl ring-1 ring-black/5 dark:ring-white/5 animate-in fade-in zoom-in-95 duration-200"
+            style={{
+              backgroundColor: "var(--card)",
+              borderColor: "var(--border)",
+              borderWidth: "1px",
+            }}
             role="dialog"
             aria-modal="true"
-            aria-labelledby="pdf-delete-title"
+            aria-labelledby="pdf-error-title"
+            onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-full bg-rose-500/15 text-rose-400 flex items-center justify-center">
+            <div className="flex flex-col items-center text-center gap-4">
+              <div
+                className="h-14 w-14 rounded-full flex items-center justify-center"
+                style={{ backgroundColor: "rgba(245, 158, 11, 0.15)" }}
+              >
                 <svg
-                  className="w-6 h-6"
+                  className="w-7 h-7 text-amber-500"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
@@ -368,45 +411,126 @@ export default function PdfAssetsPage() {
                   <path
                     strokeLinecap="round"
                     strokeLinejoin="round"
-                    strokeWidth={1.8}
-                    d="M12 9v4m0 4h.01M5 7h14M9 7l1-2h4l1 2m2 0v11a2 2 0 01-2 2H9a2 2 0 01-2-2V7"
+                    strokeWidth={1.5}
+                    d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"
                   />
                 </svg>
               </div>
-              <div>
+
+              <div className="space-y-1.5">
+                <p
+                  id="pdf-error-title"
+                  className="text-base font-semibold"
+                  style={{ color: "var(--foreground)" }}
+                >
+                  {errorModal.title}
+                </p>
+                <p
+                  className="text-sm leading-relaxed"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
+                  {errorModal.message}
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              className="mt-6 w-full btn-primary"
+              onClick={() => setErrorModal(null)}
+            >
+              閉じる
+            </button>
+          </div>
+        </div>
+      )}
+
+      {deleteTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={handleDeleteCancel}
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl p-6 shadow-2xl ring-1 ring-black/5 dark:ring-white/5 animate-in fade-in zoom-in-95 duration-200"
+            style={{
+              backgroundColor: "var(--card)",
+              borderColor: "var(--border)",
+              borderWidth: "1px",
+            }}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="pdf-delete-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex flex-col items-center text-center gap-4">
+              <div
+                className="h-14 w-14 rounded-full flex items-center justify-center"
+                style={{ backgroundColor: "rgba(244, 63, 94, 0.15)" }}
+              >
+                <svg
+                  className="w-7 h-7 text-rose-500"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
+                  />
+                </svg>
+              </div>
+
+              <div className="space-y-1.5">
                 <p
                   id="pdf-delete-title"
-                  className="text-lg font-semibold text-foreground"
+                  className="text-base font-semibold"
+                  style={{ color: "var(--foreground)" }}
                 >
                   PDFを削除しますか？
                 </p>
-                <p className="text-sm text-muted-foreground">
+                <p
+                  className="text-sm"
+                  style={{ color: "var(--muted-foreground)" }}
+                >
                   この操作は取り消せません。
                 </p>
               </div>
             </div>
 
-            <div className="rounded-xl border border-border/70 bg-muted/30 p-4">
-              <p className="text-sm font-medium text-foreground truncate">
+            <div
+              className="mt-4 rounded-xl px-4 py-3"
+              style={{
+                backgroundColor: "var(--muted)",
+                border: "1px solid var(--border)",
+              }}
+            >
+              <p
+                className="text-sm font-medium truncate"
+                style={{ color: "var(--foreground)" }}
+              >
                 {deleteTarget.name}
               </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                サイズ: {formatBytes(deleteTarget.size)} ・ 登録日時:{" "}
-                {deleteTarget.uploadedAt}
+              <p
+                className="text-xs mt-1"
+                style={{ color: "var(--muted-foreground)" }}
+              >
+                {formatBytes(deleteTarget.size)} ・ {deleteTarget.uploadedAt}
               </p>
             </div>
 
-            <div className="flex justify-end gap-3">
+            <div className="mt-6 flex gap-3">
               <button
                 type="button"
-                className="btn-secondary text-sm px-4"
+                className="flex-1 btn-secondary"
                 onClick={handleDeleteCancel}
               >
                 キャンセル
               </button>
               <button
                 type="button"
-                className="inline-flex items-center justify-center rounded-xl bg-rose-500 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-rose-500/30 transition hover:bg-rose-400"
+                className="flex-1 inline-flex items-center justify-center rounded-xl bg-rose-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-rose-600"
                 onClick={handleDeleteConfirm}
               >
                 削除する

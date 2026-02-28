@@ -2,16 +2,15 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { usePathname } from "next/navigation";
 import { Tooltip } from "@mantine/core";
 import { UserProfileModal } from "./UserProfileModal";
 import { useSessionValidation } from "@/hooks/useSessionValidation";
+import { useUser } from "@/contexts/UserContext";
 
 export function AppSidebar() {
-  const [userName, setUserName] = useState<string>("");
-  const [userEmail, setUserEmail] = useState<string>("");
-  const [companyName, setCompanyName] = useState<string>("");
+  const { userName, userEmail, companyName, setUserEmail } = useUser();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const pathname = usePathname();
 
@@ -116,27 +115,6 @@ export function AppSidebar() {
     },
   ];
 
-  useEffect(() => {
-    // 画面左下に表示するユーザー情報を取得
-    // /api/account/me のレスポンスを想定（account.display_name / account.email）
-    const fetchUser = async () => {
-      try {
-        const res = await fetch("/api/account/me", { credentials: "include" });
-        if (!res.ok) return;
-        const data = (await res.json().catch(() => ({}))) as {
-          account?: { name?: string | null; email?: string | null };
-          company?: { name?: string | null };
-        };
-        setUserName((data.account?.name ?? "").trim());
-        setUserEmail((data.account?.email ?? "").trim());
-        setCompanyName((data.company?.name ?? "").trim());
-      } catch {
-        // fail silently
-      }
-    };
-    void fetchUser();
-  }, []);
-
   const handleUpdateEmail = async (newEmail: string) => {
     const res = await fetch("/api/account/update-email", {
       method: "POST",
@@ -239,6 +217,44 @@ export function AppSidebar() {
             </Link>
           );
         })}
+
+        <div className="pt-2 mt-2 border-t border-border/40">
+          <a
+            href="/manual/Apotto_フォーム自動送信マニュアル配布用.docx"
+            download
+            className="group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200 text-muted-foreground hover:text-foreground hover:bg-muted"
+          >
+            <div className="relative flex h-9 w-9 items-center justify-center rounded-lg border border-transparent bg-muted text-muted-foreground transition-all duration-200 group-hover:text-foreground group-hover:border-border/70 group-hover:scale-105">
+              <svg
+                className="w-5 h-5"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"
+                />
+              </svg>
+            </div>
+            <span className="flex-1">マニュアル</span>
+            <svg
+              className="w-3.5 h-3.5 opacity-50 group-hover:opacity-100 transition-opacity"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+              />
+            </svg>
+          </a>
+        </div>
       </div>
 
       <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-border/50 bg-muted/10">
