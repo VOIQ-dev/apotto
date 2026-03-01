@@ -342,8 +342,12 @@ export function Chatbot() {
                       {message.content}
                     </ReactMarkdown>
                   )}
-                  {message.isStreaming && (
-                    <span className="ml-1 inline-block h-2 w-2 animate-pulse rounded-full bg-current" />
+                  {message.isStreaming && message.content === "" && (
+                    <span className="flex items-center gap-1 py-1">
+                      <span className="inline-block h-2 w-2 animate-bounce rounded-full bg-current [animation-delay:0ms]" />
+                      <span className="inline-block h-2 w-2 animate-bounce rounded-full bg-current [animation-delay:150ms]" />
+                      <span className="inline-block h-2 w-2 animate-bounce rounded-full bg-current [animation-delay:300ms]" />
+                    </span>
                   )}
                 </div>
               </div>
