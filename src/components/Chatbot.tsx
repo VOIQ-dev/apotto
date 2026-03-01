@@ -195,14 +195,14 @@ export function Chatbot() {
       {/* フローティングチャットボタン */}
       <div className="fixed bottom-6 right-6 z-50 group/fab">
         {!isOpen && (
-          <div className="pointer-events-none absolute bottom-16 right-0 w-52 rounded-xl border border-white/10 bg-gray-900 px-3 py-2.5 shadow-xl opacity-0 translate-y-1 transition-all duration-200 group-hover/fab:opacity-100 group-hover/fab:translate-y-0">
-            <p className="text-xs font-semibold text-white leading-snug">
+          <div className="pointer-events-none absolute bottom-16 right-0 w-52 rounded-xl border border-gray-200 bg-white px-3 py-2.5 shadow-lg opacity-0 translate-y-1 transition-all duration-200 group-hover/fab:opacity-100 group-hover/fab:translate-y-0 dark:border-white/10 dark:bg-gray-800 dark:shadow-xl">
+            <p className="text-xs font-semibold text-gray-900 leading-snug dark:text-white">
               AIアシスタント
             </p>
-            <p className="mt-0.5 text-[11px] text-gray-400 leading-snug">
+            <p className="mt-0.5 text-[11px] text-gray-500 leading-snug dark:text-gray-400">
               使い方の質問や営業メールの相談をどうぞ
             </p>
-            <div className="absolute -bottom-1.5 right-5 h-3 w-3 rotate-45 rounded-sm border-b border-r border-white/10 bg-gray-900" />
+            <div className="absolute -bottom-1.5 right-5 h-3 w-3 rotate-45 rounded-sm border-b border-r border-gray-200 bg-white dark:border-white/10 dark:bg-gray-800" />
           </div>
         )}
         <button

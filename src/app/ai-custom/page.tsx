@@ -3044,7 +3044,10 @@ export default function AiCustomPage() {
                     <div>複数の企業フォームを同時並行で送信する</div>
                     <div>タブ数です。増やすほど処理が速くなりますが</div>
                     <div>PCへの負荷も高くなります。</div>
-                    <div className="mt-1 text-blue-400 font-semibold">
+                    <div
+                      className="mt-1 font-semibold"
+                      style={{ color: "var(--color-primary, #3b82f6)" }}
+                    >
                       推奨: 3〜5
                     </div>
                   </div>
@@ -3053,6 +3056,20 @@ export default function AiCustomPage() {
                 withArrow
                 multiline
                 w={215}
+                styles={{
+                  tooltip: {
+                    backgroundColor: "var(--card, #1e2433)",
+                    color: "var(--card-foreground, #f1f5f9)",
+                    border: "1px solid var(--border, rgba(255,255,255,0.1))",
+                    boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+                    borderRadius: "0.75rem",
+                    padding: "0.625rem 0.75rem",
+                  },
+                  arrow: {
+                    backgroundColor: "var(--card, #1e2433)",
+                    borderColor: "var(--border, rgba(255,255,255,0.1))",
+                  },
+                }}
               >
                 <div className="flex items-center gap-1.5">
                   <label className="text-xs text-muted-foreground whitespace-nowrap cursor-help underline decoration-dotted underline-offset-2">
