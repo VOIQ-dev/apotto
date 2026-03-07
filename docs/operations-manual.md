@@ -65,19 +65,51 @@
 
 ### ブランチ戦略
 
-⚠️ **重要**: 現在は`master`ブランチに直接pushする運用です。
+| ブランチ  | 役割           | デプロイ先                      |
+| --------- | -------------- | ------------------------------- |
+| `staging` | 開発・検証用   | Vercel プレビュー環境           |
+| `master`  | 本番リリース用 | Vercel 本番環境（自動デプロイ） |
+
+**基本フロー:**
 
 ```
-master ブランチへのpush
+作業ブランチ（任意）or staging へ直接コミット
    ↓
-自動デプロイ（Vercel + Railway）
+staging ブランチへ push
+   ↓
+ステージング環境で動作確認
+   ↓
+staging → master へ Fast-forward マージ
+   ↓
+git push origin master
+   ↓
+Vercel 本番環境へ自動デプロイ
+```
+
+**手順:**
+
+```bash
+# 1. staging で開発・コミット
+git checkout staging
+git add .
+git commit -m "feat: ○○機能を追加"
+git push origin staging
+
+# 2. ステージング環境で動作確認
+
+# 3. 問題なければ master へマージ
+git checkout master
+git merge staging
+git push origin master
+git checkout staging  # staging に戻っておく
 ```
 
 **注意事項:**
 
-- `master`へのpushは即座に本番環境へデプロイされます
-- コミット前に必ずローカルでテストを実施してください
-- 緊急時以外は、Pull Requestを作成してレビュー後にマージすることを推奨
+- `master` へのpushは即座に本番環境へデプロイされます
+- 必ず `staging` で動作確認してから `master` にマージすること
+- `staging` をスキップして `master` へ直接pushするのは緊急バグ修正のみ
+- `master` へのコミットは Fast-forward マージを推奨（履歴を汚さない）
 
 ### コミットメッセージ規約
 
