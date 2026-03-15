@@ -1425,6 +1425,41 @@ export default function AiCustomPage() {
       }
 
       pushLog(`✅ ${extResult.count}件を拡張機能のキューに追加しました`);
+
+      // PDF送信ログを保存（トークンをDBに登録しないと /pdf/[token] が404になる）
+      const allLinkEntries = batchItems.flatMap((item) =>
+        item.linkEntries.map((entry) => ({
+          pdf_id: entry.pdfId,
+          token: entry.token,
+          recipient_company_name: item.card.companyName,
+          recipient_homepage_url: item.card.homepageUrl,
+          recipient_email: item.card.email,
+          sent_at: item.sentAtIso,
+        })),
+      );
+
+      if (allLinkEntries.length > 0) {
+        try {
+          const saveRes = await fetch("/api/pdf/send-log", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ logs: allLinkEntries }),
+          });
+          if (!saveRes.ok) {
+            const errText = await saveRes.text().catch(() => "");
+            console.warn("[batch-send] failed to save send-log", errText);
+            pushLog(
+              "⚠️ PDF送信ログの保存に失敗しました。PDFリンクが無効になる可能性があります。",
+            );
+          }
+        } catch (e) {
+          console.warn("[batch-send] send-log request failed", e);
+          pushLog(
+            "⚠️ PDF送信ログの保存に失敗しました。PDFリンクが無効になる可能性があります。",
+          );
+        }
+      }
+
       pushLog(`📝 送信進捗を監視中...`);
 
       // ベースラインを取得（送信開始前の完了済み件数）
