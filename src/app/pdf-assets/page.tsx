@@ -132,18 +132,21 @@ export default function PdfAssetsPage() {
         continue;
       }
 
-      const formData = new FormData();
-      formData.append("file", file);
-
       try {
-        const res = await fetch("/api/pdf/upload", {
+        // Step 1: presigned upload URL を取得
+        const presignRes = await fetch("/api/pdf/presign-upload", {
           method: "POST",
-          body: formData,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            filename: file.name,
+            size: file.size,
+            contentType: file.type,
+          }),
         });
 
-        if (!res.ok) {
-          const err = await res.json();
-          const isDuplicate = res.status === 409;
+        if (!presignRes.ok) {
+          const err = await presignRes.json();
+          const isDuplicate = presignRes.status === 409;
           showError(
             isDuplicate ? "同名ファイルが存在します" : "アップロード失敗",
             err.error || "不明なエラーが発生しました。",
@@ -151,7 +154,49 @@ export default function PdfAssetsPage() {
           continue;
         }
 
-        const data = await res.json();
+        const {
+          signedUrl,
+          storagePath,
+          filename: confirmedName,
+        } = await presignRes.json();
+
+        // Step 2: Supabase Storage へ直接アップロード（Vercelの4.5MB制限を回避）
+        const uploadRes = await fetch(signedUrl, {
+          method: "PUT",
+          headers: { "Content-Type": "application/pdf" },
+          body: file,
+        });
+
+        if (!uploadRes.ok) {
+          showError(
+            "アップロード失敗",
+            "ストレージへのアップロードに失敗しました。しばらくしてから再度お試しください。",
+          );
+          continue;
+        }
+
+        // Step 3: メタデータをDBに保存
+        const confirmRes = await fetch("/api/pdf/confirm-upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            storagePath,
+            filename: confirmedName,
+            size: file.size,
+          }),
+        });
+
+        if (!confirmRes.ok) {
+          const err = await confirmRes.json();
+          showError(
+            "登録失敗",
+            err.error ||
+              "アップロードは完了しましたがデータベースへの登録に失敗しました。",
+          );
+          continue;
+        }
+
+        const data = await confirmRes.json();
         const pdfId: string | null = data.id ? String(data.id) : null;
         const newPdf: PdfDocument = {
           id: pdfId ?? crypto.randomUUID(),
