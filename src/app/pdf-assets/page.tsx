@@ -233,6 +233,8 @@ export default function PdfAssetsPage() {
       });
       if (res.ok) {
         setPdfs((prev) => prev.filter((pdf) => pdf.id !== deleteTarget.id));
+      } else if (res.status === 403) {
+        showError("権限がありません", "PDFの削除には管理者権限が必要です。");
       } else {
         showError("削除失敗", "PDFの削除に失敗しました。再度お試しください。");
       }
