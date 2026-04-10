@@ -40,8 +40,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 50MB 制限
-    const MAX_SIZE = 50 * 1024 * 1024;
+    // 15MB 制限
+    const MAX_SIZE = 15 * 1024 * 1024;
     if (file.size > MAX_SIZE) {
       return json(
         { error: "ファイルサイズは50MB以下にしてください" },

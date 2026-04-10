@@ -11,7 +11,7 @@ const bucketName = process.env.NEXT_PUBLIC_SUPABASE_BUCKET || "pdf-assets";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MAX_SIZE = 50 * 1024 * 1024; // 50MB
+const MAX_SIZE = 15 * 1024 * 1024; // 15MB
 
 export async function POST(request: NextRequest) {
   try {
