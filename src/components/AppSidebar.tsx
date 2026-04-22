@@ -2,20 +2,66 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { Tooltip } from "@mantine/core";
 import { UserProfileModal } from "./UserProfileModal";
+import { AiProgressBanner } from "./AiProgressBanner";
 import { useSessionValidation } from "@/hooks/useSessionValidation";
 import { useUser } from "@/contexts/UserContext";
+
+const BUSY_KEY = "ai-custom:busy";
+const BUSY_POLL_MS = 1000;
 
 export function AppSidebar() {
   const { userName, userEmail, companyName, setUserEmail } = useUser();
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [busyState, setBusyState] = useState<string>("");
   const pathname = usePathname();
 
   // セッション検証（同時ログイン制限）
   useSessionValidation();
+
+  // ai-custom の処理中状態を監視（ページ遷移ブロック用）
+  useEffect(() => {
+    const read = () => {
+      try {
+        setBusyState(localStorage.getItem(BUSY_KEY) ?? "");
+      } catch {
+        setBusyState("");
+      }
+    };
+    read();
+    const timer = setInterval(read, BUSY_POLL_MS);
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === BUSY_KEY) read();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
+
+  const isBusy = busyState !== "";
+  const busyTitle = isBusy
+    ? busyState === "generating"
+      ? "AI文面生成中はページ遷移できません"
+      : busyState === "sending"
+        ? "フォーム送信中はページ遷移できません"
+        : "AI生成・送信中はページ遷移できません"
+    : undefined;
+
+  // 処理中は ai-custom 以外へのリンクを非活性化（クリック無効）
+  const handleNavClick = (
+    e: React.MouseEvent<HTMLAnchorElement>,
+    target: string,
+  ) => {
+    if (!isBusy) return;
+    if (target === "/ai-custom") return;
+    e.preventDefault();
+    e.stopPropagation();
+  };
 
   const navItems = [
     {
@@ -189,10 +235,18 @@ export function AppSidebar() {
               key={item.path}
               href={item.path}
               aria-current={isActive ? "page" : undefined}
+              onClick={(e) => handleNavClick(e, item.path)}
+              aria-disabled={isBusy && item.path !== "/ai-custom"}
+              tabIndex={isBusy && item.path !== "/ai-custom" ? -1 : 0}
+              title={item.path !== "/ai-custom" ? busyTitle : undefined}
               className={`relative group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200 ${
                 isActive
                   ? "text-foreground shadow-[0_10px_40px_rgba(16,185,129,0.18)] ring-1 ring-emerald-400/30 bg-gradient-to-r from-emerald-500/15 via-emerald-400/10 to-transparent"
                   : "text-muted-foreground hover:text-foreground hover:bg-muted"
+              } ${
+                isBusy && item.path !== "/ai-custom"
+                  ? "pointer-events-none opacity-40 cursor-not-allowed grayscale"
+                  : ""
               }`}
             >
               {isActive && (
@@ -217,12 +271,29 @@ export function AppSidebar() {
             </Link>
           );
         })}
+      </div>
 
+      <AiProgressBanner />
+
+      <div className="py-0 px-3 space-y-1">
         <div className="pt-2 mt-2 border-t border-border/40">
           <a
             href="/manual/apotto-manual.docx"
             download="Apotto_フォーム自動送信マニュアル配布用.docx"
-            className="group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200 text-muted-foreground hover:text-foreground hover:bg-muted"
+            onClick={(e) => {
+              if (isBusy) {
+                e.preventDefault();
+                e.stopPropagation();
+              }
+            }}
+            aria-disabled={isBusy}
+            tabIndex={isBusy ? -1 : 0}
+            title={busyTitle}
+            className={`group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200 text-muted-foreground hover:text-foreground hover:bg-muted ${
+              isBusy
+                ? "pointer-events-none opacity-40 cursor-not-allowed grayscale"
+                : ""
+            }`}
           >
             <div className="relative flex h-9 w-9 items-center justify-center rounded-lg border border-transparent bg-muted text-muted-foreground transition-all duration-200 group-hover:text-foreground group-hover:border-border/70 group-hover:scale-105">
               <svg

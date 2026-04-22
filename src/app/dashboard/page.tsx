@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState, useCallback } from "react";
 import {
   Area,
@@ -750,30 +751,114 @@ export default function DashboardPage() {
               </div>
             )}
             <div className="mt-4 grid grid-cols-4 gap-2 text-center text-xs">
-              <div>
-                <div className="text-lg font-bold text-emerald-500">
-                  {sendStats.data.success}
-                </div>
-                <div className="text-muted-foreground">成功</div>
-              </div>
-              <div>
-                <div className="text-lg font-bold text-red-500">
-                  {sendStats.data.failed}
-                </div>
-                <div className="text-muted-foreground">失敗</div>
-              </div>
-              <div>
-                <div className="text-lg font-bold text-amber-500">
-                  {sendStats.data.blocked}
-                </div>
-                <div className="text-muted-foreground">送信不可</div>
-              </div>
-              <div>
-                <div className="text-lg font-bold text-slate-400">
-                  {sendStats.data.pending}
-                </div>
-                <div className="text-muted-foreground">未送信</div>
-              </div>
+              {(
+                [
+                  {
+                    key: "成功",
+                    label: "成功",
+                    count: sendStats.data.success,
+                    colorClass: "text-emerald-500",
+                    hoverBg: "hover:bg-emerald-500/10",
+                    ring: "focus:ring-emerald-400",
+                    accent: "bg-emerald-400",
+                    accentText: "text-emerald-500 dark:text-emerald-400",
+                    description:
+                      "フォーム送信が完了した企業のみ絞り込み表示します。",
+                  },
+                  {
+                    key: "失敗",
+                    label: "失敗",
+                    count: sendStats.data.failed,
+                    colorClass: "text-red-500",
+                    hoverBg: "hover:bg-red-500/10",
+                    ring: "focus:ring-red-400",
+                    accent: "bg-red-400",
+                    accentText: "text-red-500 dark:text-red-400",
+                    description:
+                      "送信エラー等で失敗した企業のみ絞り込み表示します。",
+                  },
+                  {
+                    key: "送信不可",
+                    label: "送信不可",
+                    count: sendStats.data.blocked,
+                    colorClass: "text-amber-500",
+                    hoverBg: "hover:bg-amber-500/10",
+                    ring: "focus:ring-amber-400",
+                    accent: "bg-amber-400",
+                    accentText: "text-amber-500 dark:text-amber-400",
+                    description:
+                      "URL無効や対応外サイトなど送信できなかった企業を表示します。",
+                  },
+                  {
+                    key: "未送信",
+                    label: "未送信",
+                    count: sendStats.data.pending,
+                    colorClass: "text-slate-400",
+                    hoverBg: "hover:bg-slate-500/10",
+                    ring: "focus:ring-slate-400",
+                    accent: "bg-slate-400",
+                    accentText: "text-slate-500 dark:text-slate-300",
+                    description:
+                      "まだ送信処理を実行していない企業を表示します。",
+                  },
+                ] as const
+              ).map((item) => (
+                <MantineTooltip
+                  key={item.key}
+                  withinPortal
+                  withArrow
+                  openDelay={120}
+                  offset={10}
+                  multiline
+                  w={300}
+                  transitionProps={{ transition: "pop", duration: 180 }}
+                  classNames={{
+                    tooltip:
+                      "!p-0 !bg-transparent !shadow-none !border-0 !rounded-2xl !max-w-none",
+                    arrow:
+                      "!bg-white/95 dark:!bg-slate-900/95 !border !border-slate-200/70 dark:!border-slate-700/60",
+                  }}
+                  label={
+                    <div className="w-full overflow-hidden rounded-2xl border border-slate-200/70 bg-white/95 px-4 py-3 shadow-[0_12px_40px_-8px_rgba(15,23,42,0.18)] backdrop-blur-xl dark:border-slate-700/60 dark:bg-slate-900/95 dark:shadow-[0_12px_40px_-8px_rgba(0,0,0,0.6)]">
+                      <div className="flex items-stretch gap-3">
+                        <span
+                          className={`w-1 self-stretch rounded-full ${item.accent}`}
+                          aria-hidden
+                        />
+                        <div className="flex-1">
+                          <div className="text-[10px] font-medium uppercase tracking-[0.14em] text-slate-400 dark:text-slate-500">
+                            Filter
+                          </div>
+                          <div
+                            className={`mt-0.5 text-[13px] font-semibold leading-tight ${item.accentText}`}
+                          >
+                            {item.label}で絞り込み
+                          </div>
+                          <p className="mt-1.5 whitespace-normal break-words text-[11px] leading-relaxed text-slate-600 dark:text-slate-300">
+                            {item.description}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  }
+                >
+                  <Link
+                    href={`/ai-custom?sendStatus=${encodeURIComponent(
+                      item.key,
+                    )}#lead-table`}
+                    className={`group rounded-lg p-2 transition-colors ${item.hoverBg} focus:outline-none focus:ring-2 ${item.ring}`}
+                  >
+                    <div
+                      className={`text-lg font-bold ${item.colorClass} group-hover:underline`}
+                    >
+                      {item.count}
+                    </div>
+                    <div className="text-muted-foreground group-hover:text-foreground">
+                      {item.label} →
+                    </div>
+                  </Link>
+                </MantineTooltip>
+              ))}
             </div>
           </div>
 

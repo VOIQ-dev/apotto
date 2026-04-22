@@ -32,6 +32,11 @@ import {
 
 import { AppSidebar } from "@/components/AppSidebar";
 import { Chatbot } from "@/components/Chatbot";
+import {
+  ActionConfirmModal,
+  shouldShowConfirm,
+  type ActionType,
+} from "@/components/ActionConfirmModal";
 
 // ag-gridモジュール登録
 ModuleRegistry.registerModules([AllCommunityModule]);
@@ -53,6 +58,7 @@ import {
 } from "@/lib/productContext";
 import {
   pingExtension,
+  diagnoseExtensionConnection,
   addBatchToExtension,
   getExtensionStatus,
   getMaxConcurrent,
@@ -177,7 +183,19 @@ const PRODUCT_DETAIL_GROUPS = PRODUCT_CONTEXT_GROUPS;
 const STORAGE_KEYS = {
   sender: "ai-custom:senderProfile",
   product: "ai-custom:productContext",
+  cards: "ai-custom:cards",
+  queue: "ai-custom:queueState",
+  logs: "ai-custom:logs",
+  sendResults: "ai-custom:sendResults",
+  lastSendFinishedAt: "ai-custom:lastSendFinishedAt",
+  selectedPdfIds: "ai-custom:selectedPdfIds",
+  uploadState: "ai-custom:uploadState",
 } as const;
+
+// localStorageに保存するログの最大件数（肥大化防止）
+const MAX_PERSISTED_LOGS = 200;
+// 保存のdebounce時間
+const PERSIST_DEBOUNCE_MS = 500;
 
 const SENDER_FIELD_LABELS: Record<keyof SenderProfile, string> = {
   companyName: "会社名",
@@ -398,6 +416,7 @@ export default function AiCustomPage() {
   );
   const [restoredSender, setRestoredSender] = useState(false);
   const [restoredProduct, setRestoredProduct] = useState(false);
+  const [restoredWorkspace, setRestoredWorkspace] = useState(false);
   const [autoRunStatus, setAutoRunStatus] = useState<
     "idle" | "running" | "error" | "done"
   >("idle");
@@ -413,6 +432,7 @@ export default function AiCustomPage() {
 
   // 送信方法は拡張機能に固定（予約送信は別途実装予定）
   const [extensionAvailable, setExtensionAvailable] = useState(false);
+  const [extensionDiagReason, setExtensionDiagReason] = useState<string>("");
   // Chrome拡張フォーム送信の並行タブ数（デフォルト3）
   const [maxConcurrent, setMaxConcurrent] = useState(3);
   // AI文面生成の並行実行数（デフォルト5）
@@ -456,13 +476,15 @@ export default function AiCustomPage() {
   // Chrome拡張機能の可用性チェックと並行タブ数の取得
   useEffect(() => {
     async function checkExtension() {
-      const available = await pingExtension();
-      setExtensionAvailable(available);
-      if (available) {
+      const diag = await diagnoseExtensionConnection();
+      setExtensionAvailable(diag.available);
+      if (diag.available) {
         console.log("[ai-custom] Chrome拡張機能が利用可能です");
-        // 並行タブ数を取得
         const concurrent = await getMaxConcurrent();
         setMaxConcurrent(concurrent);
+      } else {
+        setExtensionDiagReason(diag.reason ?? "不明なエラー");
+        console.warn("[ai-custom] 拡張機能接続失敗:", diag.reason);
       }
     }
     checkExtension();
@@ -575,6 +597,178 @@ export default function AiCustomPage() {
       console.warn("[ai-custom] failed to persist productContext", error);
     }
   }, [productContext, restoredProduct]);
+
+  // 初期ロード: ワークスペース状態（カード・キュー・ログ・送信結果など）を復元
+  // 画面遷移/リロードで中断された生成中カードは error 状態にして再生成を促す
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const rawCards = localStorage.getItem(STORAGE_KEYS.cards);
+      let interruptedCount = 0;
+      if (rawCards) {
+        const parsed = JSON.parse(rawCards) as CompanyCard[];
+        if (Array.isArray(parsed)) {
+          const normalized = parsed.map((card) => {
+            if (card.status === "generating") {
+              interruptedCount += 1;
+              return {
+                ...card,
+                status: "error" as const,
+                errorMessage:
+                  "画面遷移またはリロードにより中断されました。再生成してください。",
+              };
+            }
+            return card;
+          });
+          setCards(normalized);
+        }
+      }
+
+      // キュー情報は復元しない（自動再生成を行わない仕様のため）
+      setQueueState({ pendingIds: [], running: false });
+
+      const rawLogs = localStorage.getItem(STORAGE_KEYS.logs);
+      if (rawLogs) {
+        const parsed = JSON.parse(rawLogs) as string[];
+        if (Array.isArray(parsed)) {
+          setLogs(parsed);
+          if (interruptedCount > 0) {
+            setLogs((prev) => [
+              ...prev,
+              `⚠️ 画面遷移/リロードで中断されたカード${interruptedCount}件をエラー状態にしました。必要に応じて再生成してください。`,
+            ]);
+          }
+        }
+      } else if (interruptedCount > 0) {
+        setLogs([
+          `⚠️ 画面遷移/リロードで中断されたカード${interruptedCount}件をエラー状態にしました。必要に応じて再生成してください。`,
+        ]);
+      }
+
+      const rawResults = localStorage.getItem(STORAGE_KEYS.sendResults);
+      if (rawResults) {
+        const parsed = JSON.parse(rawResults) as SendResultRow[];
+        if (Array.isArray(parsed)) setSendResults(parsed);
+      }
+
+      const rawLastSent = localStorage.getItem(STORAGE_KEYS.lastSendFinishedAt);
+      if (rawLastSent) setLastSendFinishedAt(rawLastSent);
+
+      const rawSelected = localStorage.getItem(STORAGE_KEYS.selectedPdfIds);
+      if (rawSelected) {
+        const parsed = JSON.parse(rawSelected) as Record<string, boolean>;
+        if (parsed && typeof parsed === "object") setSelectedPdfIds(parsed);
+      }
+
+      const rawUpload = localStorage.getItem(STORAGE_KEYS.uploadState);
+      if (rawUpload) {
+        const parsed = JSON.parse(rawUpload) as AiUploadState;
+        if (parsed && typeof parsed === "object") {
+          setUploadState({ ...parsed, isImporting: false });
+        }
+      }
+    } catch (error) {
+      console.warn("[ai-custom] failed to restore workspace state", error);
+    } finally {
+      setRestoredWorkspace(true);
+    }
+  }, []);
+
+  // ワークスペース状態を localStorage に保存（debounce 付き）
+  useEffect(() => {
+    if (!restoredWorkspace) return;
+    if (typeof window === "undefined") return;
+    const timer = setTimeout(() => {
+      try {
+        localStorage.setItem(STORAGE_KEYS.cards, JSON.stringify(cards));
+      } catch (error) {
+        console.warn("[ai-custom] failed to persist cards", error);
+      }
+    }, PERSIST_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [cards, restoredWorkspace]);
+
+  useEffect(() => {
+    if (!restoredWorkspace) return;
+    if (typeof window === "undefined") return;
+    const timer = setTimeout(() => {
+      try {
+        const persisted: QueueState = {
+          pendingIds: queueState.pendingIds,
+          running: false,
+          lastProcessed: queueState.lastProcessed,
+        };
+        localStorage.setItem(STORAGE_KEYS.queue, JSON.stringify(persisted));
+      } catch (error) {
+        console.warn("[ai-custom] failed to persist queueState", error);
+      }
+    }, PERSIST_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [queueState.pendingIds, queueState.lastProcessed, restoredWorkspace]);
+
+  useEffect(() => {
+    if (!restoredWorkspace) return;
+    if (typeof window === "undefined") return;
+    const timer = setTimeout(() => {
+      try {
+        const trimmed = logs.slice(-MAX_PERSISTED_LOGS);
+        localStorage.setItem(STORAGE_KEYS.logs, JSON.stringify(trimmed));
+      } catch (error) {
+        console.warn("[ai-custom] failed to persist logs", error);
+      }
+    }, PERSIST_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [logs, restoredWorkspace]);
+
+  useEffect(() => {
+    if (!restoredWorkspace) return;
+    if (typeof window === "undefined") return;
+    const timer = setTimeout(() => {
+      try {
+        localStorage.setItem(
+          STORAGE_KEYS.sendResults,
+          JSON.stringify(sendResults),
+        );
+        if (lastSendFinishedAt) {
+          localStorage.setItem(
+            STORAGE_KEYS.lastSendFinishedAt,
+            lastSendFinishedAt,
+          );
+        } else {
+          localStorage.removeItem(STORAGE_KEYS.lastSendFinishedAt);
+        }
+      } catch (error) {
+        console.warn("[ai-custom] failed to persist sendResults", error);
+      }
+    }, PERSIST_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [sendResults, lastSendFinishedAt, restoredWorkspace]);
+
+  useEffect(() => {
+    if (!restoredWorkspace) return;
+    if (typeof window === "undefined") return;
+    try {
+      localStorage.setItem(
+        STORAGE_KEYS.selectedPdfIds,
+        JSON.stringify(selectedPdfIds),
+      );
+    } catch (error) {
+      console.warn("[ai-custom] failed to persist selectedPdfIds", error);
+    }
+  }, [selectedPdfIds, restoredWorkspace]);
+
+  useEffect(() => {
+    if (!restoredWorkspace) return;
+    if (typeof window === "undefined") return;
+    try {
+      localStorage.setItem(
+        STORAGE_KEYS.uploadState,
+        JSON.stringify(uploadState),
+      );
+    } catch (error) {
+      console.warn("[ai-custom] failed to persist uploadState", error);
+    }
+  }, [uploadState, restoredWorkspace]);
 
   const productContextFilled = useMemo(
     () => Object.values(productContext).some((v) => v.trim().length > 0),
@@ -822,6 +1016,26 @@ export default function AiCustomPage() {
 
   const onGridReady = useCallback((params: GridReadyEvent) => {
     gridApiRef.current = params.api;
+    // URLクエリ ?sendStatus=... で遷移してきた場合、初期フィルターを適用
+    if (typeof window === "undefined") return;
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      const status = sp.get("sendStatus");
+      const validStatus = ["成功", "失敗", "送信不可", "未送信"];
+      if (status && validStatus.includes(status)) {
+        params.api.setFilterModel({
+          sendStatus: { values: [status] },
+        });
+        setTimeout(() => {
+          document.getElementById("lead-table")?.scrollIntoView({
+            behavior: "smooth",
+            block: "start",
+          });
+        }, 100);
+      }
+    } catch {
+      // noop
+    }
   }, []);
 
   const onSelectionChanged = useCallback((event: SelectionChangedEvent) => {
@@ -979,7 +1193,20 @@ export default function AiCustomPage() {
       skippedCount: 0,
     });
     clearQueue();
+    setSendResults([]);
+    setLastSendFinishedAt(null);
     setLogs((prev) => [...prev, "カードをリセットしました。"]);
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.removeItem(STORAGE_KEYS.cards);
+        localStorage.removeItem(STORAGE_KEYS.queue);
+        localStorage.removeItem(STORAGE_KEYS.sendResults);
+        localStorage.removeItem(STORAGE_KEYS.lastSendFinishedAt);
+        localStorage.removeItem(STORAGE_KEYS.uploadState);
+      } catch (error) {
+        console.warn("[ai-custom] failed to clear persisted state", error);
+      }
+    }
   }, [clearQueue]);
 
   const handleGenerateEntry = useCallback(
@@ -1396,6 +1623,16 @@ export default function AiCustomPage() {
 
       pushLog(`🔌 Chrome拡張機能で送信開始（${targets.length}件）`);
 
+      // ベースラインを拡張機能への追加前に取得（追加後だと既に処理が進んでしまう）
+      const baselineStatus = await getExtensionStatus();
+      const baselineCompleted = baselineStatus?.completed || 0;
+      const baselineFailed = baselineStatus?.failed || 0;
+      const baselineFailedIds = new Set(
+        (baselineStatus?.items || [])
+          .filter((i) => i.status === "failed")
+          .map((i) => i.id),
+      );
+
       const extensionItems: ExtensionQueueItem[] = batchItems.map((item) => ({
         url: item.payload.url,
         company: item.card.companyName,
@@ -1462,22 +1699,14 @@ export default function AiCustomPage() {
 
       pushLog(`📝 送信進捗を監視中...`);
 
-      // ベースラインを取得（送信開始前の完了済み件数）
-      const baselineStatus = await getExtensionStatus();
-      const baselineCompleted = baselineStatus?.completed || 0;
-      const baselineFailed = baselineStatus?.failed || 0;
-      const baselineFailedIds = new Set(
-        (baselineStatus?.items || [])
-          .filter((i) => i.status === "failed")
-          .map((i) => i.id),
-      );
-
-      // 拡張機能の送信完了をポーリングで待つ（無期限）
       const initialPending = extResult.count || targets.length;
       let lastLoggedProgress = 0;
       const loggedFailedIds = new Set<string>();
 
-      const pollInterval = 2000; // 2秒ごとにチェック
+      const pollInterval = 2000;
+      // 安全策: 進捗が止まったまま一定時間経過したらタイムアウト
+      const staleTimeoutMs = 5 * 60 * 1000; // 5分間進捗なしでタイムアウト
+      let lastProgressAt = Date.now();
 
       while (true) {
         await new Promise((resolve) => setTimeout(resolve, pollInterval));
@@ -1488,7 +1717,6 @@ export default function AiCustomPage() {
           break;
         }
 
-        // ベースラインからの差分で今回の送信結果を計算
         const currentCompleted = status.completed - baselineCompleted;
         const currentFailed = status.failed - baselineFailed;
         const totalProcessed = currentCompleted + currentFailed;
@@ -1505,7 +1733,6 @@ export default function AiCustomPage() {
           loggedFailedIds.add(item.id);
           pushLog(`  ✗ ${item.company || item.url}`);
           if (item.error) {
-            // エラーメッセージが改行を含む場合（詳細ログ）、各行をインデント付きで出力
             const errorLines = item.error.split("\n");
             for (const line of errorLines) {
               pushLog(`    ${line}`);
@@ -1519,12 +1746,29 @@ export default function AiCustomPage() {
             `📊 進捗: ${totalProcessed}/${initialPending}件完了（成功 ${currentCompleted} / 失敗 ${currentFailed}）`,
           );
           lastLoggedProgress = totalProcessed;
+          lastProgressAt = Date.now();
         }
 
-        // 全て完了したらループを抜ける
+        // 終了条件: remaining=0（キューが空）かつ処理数が送信数以上
+        // remaining=0 のみでも終了（ベースラインのズレで totalProcessed が足りない場合の安全策）
         if (remaining === 0 && totalProcessed >= initialPending) {
           pushLog(
             `✅ 拡張機能での送信完了（成功 ${currentCompleted} / 失敗 ${currentFailed}）`,
+          );
+          return { successCount: currentCompleted, failedCount: currentFailed };
+        }
+
+        if (remaining === 0 && totalProcessed > 0) {
+          pushLog(
+            `✅ 拡張機能での送信完了（成功 ${currentCompleted} / 失敗 ${currentFailed}）`,
+          );
+          return { successCount: currentCompleted, failedCount: currentFailed };
+        }
+
+        // 進捗が一定時間停止したらタイムアウト
+        if (Date.now() - lastProgressAt > staleTimeoutMs) {
+          pushLog(
+            `⚠️ 送信進捗が${Math.round(staleTimeoutMs / 60000)}分間停止しました。処理を中断します（成功 ${currentCompleted} / 失敗 ${currentFailed}）`,
           );
           return { successCount: currentCompleted, failedCount: currentFailed };
         }
@@ -2227,6 +2471,73 @@ export default function AiCustomPage() {
       setIsSearchingContactForms(false);
     }
   }, [leads, selectedLeadIds, showToast, pushLog, extensionAvailable]);
+
+  // 処理中フラグ（サイドバーの遷移ブロック用に localStorage にも同期）
+  const isGeneratingActive = queueState.running || autoRunStatus === "running";
+  const isSendingActive = isSending || autoRunStatus === "running";
+  const isBusyActive = isGeneratingActive || isSendingActive;
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      if (isBusyActive) {
+        const state =
+          isGeneratingActive && isSendingActive
+            ? "both"
+            : isGeneratingActive
+              ? "generating"
+              : "sending";
+        localStorage.setItem("ai-custom:busy", state);
+      } else {
+        localStorage.removeItem("ai-custom:busy");
+      }
+    } catch {
+      // noop
+    }
+  }, [isBusyActive, isGeneratingActive, isSendingActive]);
+
+  // 処理中のページリロード/閉じる操作を警告
+  useEffect(() => {
+    if (!isBusyActive) return;
+    if (typeof window === "undefined") return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+      return "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [isBusyActive]);
+
+  // 確認モーダル用 state（生成/送信開始前の警告）
+  const [confirmModalType, setConfirmModalType] = useState<ActionType | null>(
+    null,
+  );
+  const pendingActionRef = useRef<(() => void) | null>(null);
+
+  const requestAction = useCallback(
+    (actionType: ActionType, run: () => void) => {
+      if (!shouldShowConfirm(actionType)) {
+        run();
+        return;
+      }
+      pendingActionRef.current = run;
+      setConfirmModalType(actionType);
+    },
+    [],
+  );
+
+  const handleConfirmAction = useCallback(() => {
+    const run = pendingActionRef.current;
+    pendingActionRef.current = null;
+    setConfirmModalType(null);
+    if (run) run();
+  }, []);
+
+  const handleCancelConfirm = useCallback(() => {
+    pendingActionRef.current = null;
+    setConfirmModalType(null);
+  }, []);
 
   // 選択したリードを削除
   const handleDeleteSelectedLeads = useCallback(async () => {
@@ -3027,7 +3338,8 @@ export default function AiCustomPage() {
           </div>
 
           <div
-            className="rounded-lg border border-border overflow-hidden"
+            id="lead-table"
+            className="rounded-lg border border-border overflow-hidden scroll-mt-4"
             style={{ height: 500, width: "100%" }}
           >
             <AgGridReact<LeadRow>
@@ -3141,7 +3453,12 @@ export default function AiCustomPage() {
 
               <button
                 type="button"
-                onClick={handleGenerateSelectedLeads}
+                onClick={() =>
+                  requestAction(
+                    "generate",
+                    () => void handleGenerateSelectedLeads(),
+                  )
+                }
                 disabled={
                   selectedLeadIds.size === 0 ||
                   queueState.running ||
@@ -3162,7 +3479,9 @@ export default function AiCustomPage() {
 
               <button
                 type="button"
-                onClick={() => void handleSimulateSend()}
+                onClick={() =>
+                  requestAction("send", () => void handleSimulateSend())
+                }
                 disabled={isSending || sendableReadyCards.length === 0}
                 className="btn-secondary whitespace-nowrap text-xs px-3 py-1.5"
               >
@@ -3171,7 +3490,11 @@ export default function AiCustomPage() {
 
               <button
                 type="button"
-                onClick={handleGenerateAndSendSelectedLeads}
+                onClick={() =>
+                  requestAction("both", () =>
+                    handleGenerateAndSendSelectedLeads(),
+                  )
+                }
                 disabled={
                   selectedLeadIds.size === 0 ||
                   isSending ||
@@ -3253,10 +3576,14 @@ export default function AiCustomPage() {
                 </div>
               ) : (
                 <div className="mt-3 p-3 rounded-lg border border-amber-500/30 bg-amber-500/10">
-                  <p className="text-xs text-amber-500">
-                    ⚠️
-                    Chrome拡張機能が未接続です。拡張機能をインストールしてください。
+                  <p className="text-xs text-amber-500 font-semibold">
+                    ⚠️ Chrome拡張機能が未接続です
                   </p>
+                  {extensionDiagReason && (
+                    <p className="text-xs text-amber-500/80 mt-1">
+                      原因: {extensionDiagReason}
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -3378,6 +3705,14 @@ export default function AiCustomPage() {
           </div>
         </div>
       </Modal>
+
+      {/* 処理開始前の確認モーダル（生成中ページ遷移/送信中タブ操作の警告） */}
+      <ActionConfirmModal
+        opened={confirmModalType !== null}
+        actionType={confirmModalType}
+        onCancel={handleCancelConfirm}
+        onConfirm={handleConfirmAction}
+      />
 
       {/* AIチャットボット */}
       <Chatbot />

@@ -82,6 +82,59 @@ export async function pingExtension(): Promise<boolean> {
 }
 
 /**
+ * 接続失敗時の原因を診断して返す
+ */
+export async function diagnoseExtensionConnection(): Promise<{
+  available: boolean;
+  reason?: string;
+}> {
+  if (typeof window === "undefined") {
+    return { available: false, reason: "ブラウザ環境ではありません" };
+  }
+
+  if (!window.chrome?.runtime?.sendMessage) {
+    return {
+      available: false,
+      reason:
+        "Chrome拡張APIが検出できません。Google Chromeで開いているか確認してください。",
+    };
+  }
+
+  if (!EXTENSION_ID) {
+    return {
+      available: false,
+      reason:
+        "拡張機能IDが設定されていません（NEXT_PUBLIC_CHROME_EXTENSION_ID）。管理者に連絡してください。",
+    };
+  }
+
+  try {
+    const response = await sendToExtension({ type: "PING" });
+    if (response?.success === true) {
+      return { available: true };
+    }
+    return {
+      available: false,
+      reason:
+        "拡張機能からの応答がありません。拡張機能を再読み込みしてください。",
+    };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    if (msg.includes("Could not establish connection")) {
+      return {
+        available: false,
+        reason:
+          "拡張機能がインストールされていないか、無効になっています。chrome://extensions で確認してください。",
+      };
+    }
+    return {
+      available: false,
+      reason: `拡張機能との通信に失敗しました: ${msg}`,
+    };
+  }
+}
+
+/**
  * Chrome拡張機能にバッチアイテムを追加
  */
 export async function addBatchToExtension(

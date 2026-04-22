@@ -411,6 +411,47 @@ body {
   display: inline-block;
 }
 
+/* 確認モーダルのボタン（ライト/ダーク両対応・ホバー時も視認可能） */
+.btn-confirm-cancel {
+  background-color: transparent !important;
+  color: var(--foreground) !important;
+  border: 1px solid var(--border) !important;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+.btn-confirm-cancel:hover {
+  background-color: var(--muted) !important;
+  border-color: var(--muted-foreground) !important;
+  color: var(--foreground) !important;
+}
+.btn-confirm-primary {
+  background-color: var(--primary) !important;
+  color: var(--primary-foreground) !important;
+  border: none !important;
+  transition:
+    filter 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.btn-confirm-primary:hover {
+  filter: brightness(1.08) !important;
+  box-shadow: 0 8px 20px rgba(16, 185, 129, 0.25) !important;
+}
+
+/* Mantine Modal の閉じるボタンをテーマカラーに揃える（ライト/ダーク両対応） */
+.mantine-Modal-close,
+.mantine-Drawer-close,
+.mantine-CloseButton-root {
+  color: var(--foreground) !important;
+  background-color: transparent !important;
+}
+.mantine-Modal-close:hover,
+.mantine-Drawer-close:hover,
+.mantine-CloseButton-root:hover {
+  background-color: var(--muted) !important;
+  color: var(--foreground) !important;
+}
+
 /* AG Grid - セル境界線スタイル */
 .ag-theme-quartz,
 .ag-theme-quartz-dark {
